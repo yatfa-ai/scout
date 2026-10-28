@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Social Ops</title>
+<style>
+  :root { --bg:#f6f6f3; --card:#fff; --ink:#161614; --mute:#6b6b64; --line:#e3e2da; --accent:#2a78d6; --ok:#0a7a2f; --warn:#b45309; --bad:#b42318; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141413; --card:#1d1d1b; --ink:#ecebe6; --mute:#9a9a92; --line:#2e2e2b; --accent:#6aa8ff; --ok:#4cc77a; --warn:#e0a24a; --bad:#ff7a6e; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 "Segoe UI",system-ui,sans-serif; }
+  header { padding:20px 24px 0; display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+  h1 { margin:0; font-size:20px; }
+  nav { display:flex; gap:4px; padding:12px 24px 0; flex-wrap:wrap; border-bottom:1px solid var(--line); }
+  nav button { background:none; border:0; padding:8px 14px; color:var(--mute); font:inherit; cursor:pointer; border-bottom:2px solid transparent; }
+  nav button.on { color:var(--ink); border-color:var(--accent); font-weight:600; }
+  nav .badge { background:var(--accent); color:#fff; border-radius:10px; padding:0 7px; font-size:12px; margin-left:6px; }
+  main { padding:20px 24px 60px; max-width:960px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:16px; }
+  .meta { color:var(--mute); font-size:13px; display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+  .tag { border:1px solid var(--line); border-radius:6px; padding:0 8px; }
+  .note { margin:6px 0 10px; }
+  pre.text, textarea { width:100%; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:12px; font:14px/1.55 "Segoe UI",system-ui,sans-serif; color:var(--ink); white-space:pre-wrap; margin:0; }
+  textarea { min-height:140px; resize:vertical; }
+  .facts, .ask { font-size:13px; color:var(--mute); margin-top:10px; }
+  .ask { color:var(--warn); }
+  .row { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; align-items:center; }
+  button.btn { border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:8px; padding:8px 14px; font:inherit; cursor:pointer; }
+  button.go { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  button.go:disabled { opacity:.5; cursor:default; }
+  .approved { border-color:var(--ok); }
+  .approved .stamp { color:var(--ok); font-weight:600; }
+  .help { color:var(--mute); font-size:13px; margin:0 0 16px; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; font-size:14px; }
+  th { color:var(--mute); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  tr:last-child td { border-bottom:0; }
+  a { color:var(--accent); }
+  .us { color:var(--ok); font-weight:600; }
+  .empty { color:var(--mute); padding:30px 0; text-align:center; }
+  .filter { margin-bottom:12px; display:flex; gap:8px; align-items:center; }
+  img.chart { max-width:240px; border:1px solid var(--line); border-radius:8px; margin-top:10px; display:block; }
+  @media (max-width:640px) { main, header, nav { padding-left:14px; padding-right:14px; } th:nth-child(n+4), td:nth-child(n+4) { display:none; } }
+</style>
+</head>
+<body>
+<header><h1>Social Ops</h1><span id="sub" class="meta"></span></header>
+<nav id="tabs"></nav>
+<main id="view"></main>
+
+<script>
+const TABS = [['waiting','Ждёт тебя'],['sent','Ушло'],['leads','Лиды'],['questions','Вопросы рынка'],['inbound','Ответы нам'],['people','Люди']];
+let S = null, tab = 'waiting', onlyUs = false;
+const esc = s => (s ?? '').toString().replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const when = s => s ? new Date(s).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+const NET = { linkedin:'LinkedIn', x:'X', reddit:'Reddit' };
+const KIND = { post:'пост', comment:'комментарий', reply:'ответ', thread:'тред' };
+
+async function api(path, body) {
+  const r = await fetch(path, body ? { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) } : {});
+  return r.json();
+}
+async function load() { S = await api('/api/state'); render(); }
+
+function render() {
+  const waitingN = S.waiting.filter(d => d.status === 'waiting').length;
+  document.getElementById('sub').textContent = `${waitingN} ждёт · ${S.waiting.length - waitingN} утверждено · ${S.sent.length} отправлено`;
+  document.getElementById('tabs').innerHTML = TABS.map(([k, t]) =>
+    `<button class="${k===tab?'on':''}" onclick="go('${k}')">${t}${k==='waiting'&&waitingN?`<span class="badge">${waitingN}</span>`:''}</button>`).join('');
+  document.getElementById('view').innerHTML = ({ waiting, sent, leads, questions, inbound, people })[tab]();
+}
+function go(t) { tab = t; render(); }
+
+function waiting() {
+  if (!S.waiting.length) return '<div class="empty">Ничего не ждёт. Агент принесёт новое сюда.</div>';
+  return '<p class="help">«Отправляй» относится только к этой карточке: другие черновики не трогаются. После нажатия агент отправит текст и перенесёт карточку в «Ушло».</p>' +
+    S.waiting.map(d => `
+    <div class="card ${d.status==='approved'?'approved':''}" id="d${d.id}">
+      <div class="meta"><span class="tag">${NET[d.network]}</span><span class="tag">${KIND[d.kind]}</span>
+        ${d.target_url ? `<a href="${esc(d.target_url)}" target="_blank" rel="noopener">куда</a>` : ''}
+        ${d.status==='approved' ? `<span class="stamp">утверждено ${when(d.approved_at)} — агент отправит</span>` : ''}</div>
+      <div class="note">${esc(d.target_note)}</div>
+      <pre class="text" id="t${d.id}">${esc(d.body)}</pre>
+      ${d.kind==='thread' ? '<img class="chart" src="/chart.png" alt="график к первому твиту">' : ''}
+      ${d.facts ? `<div class="facts"><b>Факты:</b> ${esc(d.facts)}</div>` : ''}
+      ${d.question ? `<div class="ask"><b>Вопрос к тебе:</b> ${esc(d.question)}</div>` : ''}
+      <div class="row" id="r${d.id}">
+        ${d.status==='waiting'
+          ? `<button class="btn go" onclick="approve(${d.id})">Отправляй</button>
+             <button class="btn" onclick="edit(${d.id})">Правка</button>
+             <button class="btn" onclick="skip(${d.id})">Пропустить</button>`
+          : `<button class="btn" onclick="unapprove(${d.id})">Отозвать</button>`}
+      </div>
+    </div>`).join('');
+}
+
+async function approve(id) {
+  if (!confirm('Утвердить к отправке именно этот текст?')) return;
+  await api('/api/approve', { id }); load();
+}
+async function unapprove(id) { await api('/api/unapprove', { id }); load(); }
+async function skip(id) {
+  const reason = prompt('Почему пропускаем? (можно пусто)'); if (reason === null) return;
+  await api('/api/skip', { id, reason }); load();
+}
+function edit(id) {
+  const d = S.waiting.find(x => x.id == id);
+  document.getElementById('t'+id).outerHTML = `<textarea id="e${id}">${esc(d.body)}</textarea>`;
+  document.getElementById('r'+id).innerHTML =
+    `<button class="btn go" onclick="saveEdit(${id})">Сохранить правку</button><button class="btn" onclick="load()">Отмена</button>`;
+}
+async function saveEdit(id) { await api('/api/edit', { id, body: document.getElementById('e'+id).value }); load(); }
+
+function sent() {
+  if (!S.sent.length && !S.ledger.length) return '<div class="empty">Пока ничего.</div>';
+  return `<table><tr><th>Когда</th><th>Сеть</th><th>Что</th><th>Итог</th></tr>` +
+    S.ledger.map(l => `<tr><td>${esc(l.at)}</td><td>${esc(l.network)}</td>
+      <td>${l.url ? `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.topic)}</a>` : esc(l.topic)}</td><td>${esc(l.outcome)}</td></tr>`).join('') + '</table>';
+}
+
+function questions() {
+  const rows = S.questions.filter(q => !onlyUs || q.to_us);
+  return `<div class="filter"><label><input type="checkbox" ${onlyUs?'checked':''} onchange="onlyUs=this.checked;render()"> только те, что спросили нас</label>
+    <span class="meta">${rows.length} из ${S.questions.length}</span></div>
+    <table><tr><th>Дата</th><th>Вопрос</th><th>Кто</th><th>Тема</th><th>Что у нас есть</th></tr>` +
+    rows.map(q => `<tr><td>${esc(String(q.date).slice(0,10))}</td>
+      <td>${q.to_us?'<span class="us">нас · </span>':''}${q.url?`<a href="${esc(q.url)}" target="_blank" rel="noopener">${esc(q.question)}</a>`:esc(q.question)}</td>
+      <td>${esc(q.asker_name || q.asker_role)}</td><td>${esc(q.topic)}</td><td>${esc(q.yatfa_answer)}</td></tr>`).join('') + '</table>';
+}
+
+const STAGE = {candidate:'кандидат',commented:'прокомментировали (ждём их хода)',connected:'коннект принят',talking:'сами написали',client:'клиент',dead:'закрыт'};
+function leads() {
+  if (!S.leads.length) return '<div class="empty">Лидов пока нет — агент приносит кандидатов, ты решаешь, с кем знакомиться.</div>';
+  return '<p class="help">Цель — чтобы они написали сами: комментируем их посты и ждём ответа; если тред затух — коннект с запиской; личка — только если коннект приняли. Никаких массовых личок.</p>' +
+    S.leads.map(l => '<div class="card"><div class="meta"><span class="tag">' + (STAGE[l.stage]||l.stage) + '</span><span>' + esc(l.name) + ' · ' + NET[l.network] + '</span>' +
+      (l.profile ? '<a href="' + esc(l.profile) + '" target="_blank" rel="noopener">профиль</a>' : '') + '</div>' +
+      '<div class="note">' + esc(l.headline) + '</div>' +
+      (l.pain ? '<div class="facts"><b>Их боль:</b> ' + esc(l.pain) + '</div>' : '') +
+      (l.next_step ? '<div class="ask"><b>Следующий шаг:</b> ' + esc(l.next_step) + '</div>' : '') + '</div>').join('');
+}
+function inbound() {
+  if (!S.inbound.length) return '<div class="empty">Ответов нам пока нет.</div>';
+  return S.inbound.map(i => `<div class="card"><div class="meta"><span class="tag">${NET[i.network]}</span><span>${esc(i.person_name || i.person)}</span><span>${esc(i.ts)}</span>
+    ${i.post_url?`<a href="${esc(i.post_url)}" target="_blank" rel="noopener">ветка</a>`:''}</div><pre class="text">${esc(i.text)}</pre></div>`).join('');
+}
+
+function people() {
+  return `<table><tr><th>Имя</th><th>Сеть</th><th>Кто</th><th>Статус</th><th>Сообщений</th></tr>` +
+    S.people.map(p => `<tr><td>${p.profile?`<a href="${esc(p.profile)}" target="_blank" rel="noopener">${esc(p.name)}</a>`:esc(p.name)}</td>
+      <td>${esc(p.network)}</td><td>${esc(p.headline)}</td><td>${esc(p.status)}</td><td>${p.n}</td></tr>`).join('') + '</table>';
+}
+load();
+</script>
+</body>
+</html>
