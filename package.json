@@ -7,7 +7,8 @@
   "bin": { "soc": "bin/soc.mjs" },
   "scripts": {
     "migrate": "node bin/soc.mjs migrate",
-    "web": "node web/server.mjs"
+    "web": "node web/server.mjs",
+    "test": "node --test test/"
   },
   "dependencies": {
     "pg": "^8.13.0"
