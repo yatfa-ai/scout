@@ -50,6 +50,12 @@ const commands = {
   // soc revise <id> --body-file f.txt   (правка текста агентом; статус возвращается в waiting)
   async revise() {
     const id = need(rest[0], 'id');
+    const d = await one(`select * from drafts where id = $1`, [id]);
+    if (!d) return out('нет такого черновика');
+    if (!['waiting', 'approved'].includes(d.status)) {
+      console.error(`черновик ${id} в статусе «${d.status}» — править можно только waiting или approved`);
+      process.exit(3);
+    }
     const bodyFile = flag('body-file');
     const body = bodyFile ? fs.readFileSync(bodyFile, 'utf8').trim() : need(flag('body'), '--body или --body-file');
     const row = await one(
@@ -132,7 +138,7 @@ const commands = {
   queue [--status waiting|approved|sent|skipped|draft|all]
   show <id>
   add --network --kind --url --note --body-file|--body [--facts --question --person]
-  revise <id> --body-file|--body
+  revise <id> --body-file|--body   (только waiting|approved — sent/skipped/draft править нельзя)
   approved                      что утверждено и ждёт отправки
   sent <id> --url <ссылка> [--outcome ...]   только для approved
   inbound --network --text [--person --url --reply-to --kind --ts]
