@@ -14,7 +14,13 @@ const json = (res, code, obj) => {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(obj));
 };
-const readBody = req => new Promise(r => { let s = ''; req.on('data', d => s += d); req.on('end', () => r(s ? JSON.parse(s) : {})); });
+const readBody = req => new Promise((resolve, reject) => {
+  let s = '';
+  req.on('data', d => s += d);
+  req.on('end', () => {
+    try { resolve(s ? JSON.parse(s) : {}); } catch (e) { reject(new Error('тело запроса — не JSON')); }
+  });
+});
 
 const routes = {
   'GET /api/state': async () => ({
