@@ -15,7 +15,7 @@ try {
       `insert into leads (person, stage, source_url, pain, next_step) values ($1,$2,$3,$4,$5)
        on conflict (person) do update set stage = excluded.stage, pain = coalesce(excluded.pain, leads.pain),
        next_step = coalesce(excluded.next_step, leads.next_step), updated_at = now() returning id, person, stage`,
-      [need('--person'), flag('stage', 'candidate'), flag('url'), flag('pain'), flag('next')]);
+      [need(flag('person'), '--person'), flag('stage', 'candidate'), flag('url'), flag('pain'), flag('next')]);
     out(row);
   } else if (cmd === 'stage') {
     const id = need(rest[0], 'id лида');
@@ -24,4 +24,7 @@ try {
 
   function out(o) { console.log(typeof o === 'string' ? o : JSON.stringify(o, null, 1)); }
   function need(v, w) { if (!v) { throw new Error('нужно: ' + w); } return v; }
+} catch (e) {
+  console.error('ошибка:', e.message);
+  process.exitCode = 1;
 } finally { await close(); }
