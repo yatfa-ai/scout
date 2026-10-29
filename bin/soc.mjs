@@ -106,6 +106,7 @@ const commands = {
   },
 
   // soc person --id x --name ... --network ...
+  // upsert: у существующего человека обновятся только --status (всегда; без него сбросится в «наблюдаем») и --relevance (только если задан); --name и остальные поля не меняются
   async person() {
     await q(`insert into people (id, name, network, profile, headline, followers, segment, relevance, first_seen, status)
              values ($1,$2,$3,$4,$5,$6,$7,$8, current_date, $9)
@@ -137,7 +138,7 @@ const commands = {
   sent <id> --url <ссылка> [--outcome ...]   только для approved
   inbound --network --text [--person --url --reply-to --kind --ts]
   question --network --question [--asker --role --to-us true --topic --answer --context --source --url]
-  person --id --name --network [...]
+  person --id --name --network [...]   upsert: у существующего обновятся только --status и --relevance (relevance — только если задан); --name не меняется; без --status статус сбросится в «наблюдаем»
   export [--dir <путь>]         JSONL-копия в sales-md/social/data`);
   },
 };
