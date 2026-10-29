@@ -4,15 +4,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { q, one, close, root } from '../lib/db.mjs';
+import { makeFlag, makeGuards } from '../lib/cli.mjs';
 
 const [cmd, ...rest] = process.argv.slice(2);
-const flag = (name, def = null) => {
-  const i = rest.indexOf('--' + name);
-  return i >= 0 ? rest[i + 1] : def;
-};
-const has = name => rest.includes('--' + name);
-const out = o => console.log(typeof o === 'string' ? o : JSON.stringify(o, null, 2));
-const need = (v, what) => { if (v == null || v === '') { console.error('нужно: ' + what); process.exit(2); } return v; };
+const flag = makeFlag(rest);
+const { need, out } = makeGuards('exit');
 
 const commands = {
   async migrate() {
