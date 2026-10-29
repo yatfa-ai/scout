@@ -42,6 +42,13 @@ let dbUrl = null;         // DSN черновой базы этого прого
 let adminClient = null;   // держим открытым: create/drop базы
 let seedDirPreExisted = false;
 
+// Каталог seedDir может быть настоящей операторской выгрузкой (README: data/ держит
+// JSONL-копию «чтобы история жила и в гите»). Единственный писатель в тесте — soc export,
+// который безусловно перезаписывает ровно эти пять артефактов, поэтому снимка этих пяти
+// достаточно, чтобы after() вернул каталог ровно в исходное состояние (байты и наличие).
+const EXPORT_ARTIFACTS = ['people', 'interactions', 'questions', 'drafts', 'ledger'];
+const seedSnapshot = new Map(); // имя -> Buffer | null (null = файла до прогона не было)
+
 function connectOnce(connectionString) {
   const c = new pg.Client({ connectionString });
   return c.connect().then(() => c).catch(e => { c.end().catch(() => {}); throw e; });
@@ -113,6 +120,10 @@ before(async () => {
 
   seedDirPreExisted = fs.existsSync(seedDir);
   if (!seedDirPreExisted) fs.mkdirSync(seedDir, { recursive: true });
+  else for (const t of EXPORT_ARTIFACTS) {   // каталог настоящий: снимаем, чтобы не оставить после себя тестовые данные
+    const p = path.join(seedDir, t + '.jsonl');
+    seedSnapshot.set(t, fs.existsSync(p) ? fs.readFileSync(p) : null);
+  }
 
   // Базовые строки справочных таблиц: import читает все четыре файла, пустой jsonl он
   // не переживает, поэтому сеем через сам soc и выгружаем штатным export.
@@ -131,6 +142,15 @@ after(async () => {
   if (!seedDirPreExisted) {
     // Весь sales-md в этом прогоне создали мы — убираем целиком.
     fs.rmSync(salesMdDir, { recursive: true, force: true });
+  } else {
+    // Каталог существовал до прогона: export перезаписал артефакты данными черновой
+    // базы — возвращаем снятое в before() (существовавшие файлы байт в байт,
+    // отсутствовавшие удаляем), остальное содержимое каталога не трогаем.
+    for (const [t, bytes] of seedSnapshot) {
+      const p = path.join(seedDir, t + '.jsonl');
+      if (bytes === null) fs.rmSync(p, { force: true });
+      else fs.writeFileSync(p, bytes);
+    }
   }
   if (adminClient) {
     await adminClient.query(`drop database if exists ${SCRATCH_DB} with (force)`);
