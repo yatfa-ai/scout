@@ -35,14 +35,19 @@ const commands = {
     out(await one('select * from drafts where id = $1', [need(rest[0], 'id черновика')]));
   },
 
-  // soc add --network linkedin --kind comment --url ... --note ... --body-file f.txt [--facts ...] [--question ...] [--person id]
+  // soc add --network linkedin --kind comment --url ... --note ... --body-file f.txt [--facts ...] [--question ...] [--person id] [--status draft|waiting]
   async add() {
+    const status = flag('status', 'waiting');
+    if (!['draft', 'waiting'].includes(status)) {
+      console.error(`статус «${status}» нельзя задать при создании — черновик создаётся в draft или waiting`);
+      process.exit(3);
+    }
     const bodyFile = flag('body-file');
     const body = bodyFile ? fs.readFileSync(bodyFile, 'utf8').trim() : need(flag('body'), '--body или --body-file');
     const row = await one(
       `insert into drafts (network, kind, status, target_person, target_url, target_note, body, facts, question)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id, status`,
-      [need(flag('network'), '--network'), need(flag('kind'), '--kind'), flag('status', 'waiting'),
+      [need(flag('network'), '--network'), need(flag('kind'), '--kind'), status,
        flag('person'), flag('url'), flag('note'), body, flag('facts'), flag('question')]);
     out(row);
   },
@@ -131,7 +136,7 @@ const commands = {
   migrate                       применить схему
   queue [--status waiting|approved|sent|skipped|draft|all]
   show <id>
-  add --network --kind --url --note --body-file|--body [--facts --question --person]
+  add --network --kind --url --note --body-file|--body [--facts --question --person] [--status draft|waiting]
   revise <id> --body-file|--body
   approved                      что утверждено и ждёт отправки
   sent <id> --url <ссылка> [--outcome ...]   только для approved
