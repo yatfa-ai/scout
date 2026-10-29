@@ -1,4 +1,4 @@
-// Одноразовый перенос из sales-md/social/data/*.jsonl и ledger.md в базу. Повторный запуск безопасен.
+// Перенос из sales-md/social/data/*.jsonl в базу. Повторный запуск безопасен.
 import fs from 'node:fs';
 import path from 'node:path';
 import { pool, q, close, root } from '../lib/db.mjs';
@@ -36,13 +36,14 @@ try {
       [r.id, r.date, r.network, r.asker, r.asker_role, r.to_us, r.question, r.context, r.source, r.url, r.topic, r.yatfa_answer, r.status]);
   }
 
-  // ledger.md: строки таблицы
-  const led = fs.readFileSync(path.join(root, '..', 'sales-md', 'social', 'ledger.md'), 'utf8').split('\n')
-    .filter(l => /^\| 20\d\d-/.test(l)).map(l => l.split('|').slice(1, -1).map(s => s.trim()));
-  await cli.query('delete from ledger');
-  for (const [at, net, topic, url, outcome] of led) {
-    await cli.query(`insert into ledger (at,network,topic,url,outcome) values ($1,$2,$3,$4,$5)`, [at, net, topic, url, outcome]);
+  // ledger.jsonl: журнал отправок (та же выгрузка, что и у остальных таблиц)
+  for (const r of read('ledger')) {
+    await cli.query(
+      `insert into ledger (id,at,network,topic,url,outcome) values ($1,$2,$3,$4,$5,$6) on conflict (id) do nothing`,
+      [r.id, r.at, r.network, r.topic, r.url ?? null, r.outcome ?? null]);
   }
+  // явные id последовательность не двигают — выравниваем, чтобы следующий insert из soc sent не упёрся в PK
+  await cli.query(`select setval(pg_get_serial_sequence('ledger','id'), coalesce((select max(id) from ledger), 0) + 1, false)`);
 
   await cli.query('commit');
   const c = await q(`select (select count(*) from people) p, (select count(*) from interactions) i,
