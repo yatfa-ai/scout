@@ -140,8 +140,14 @@ before(async () => {
 after(async () => {
   if (!adminUrl) return;
   if (!seedDirPreExisted) {
-    // Весь sales-md в этом прогоне создали мы — убираем целиком.
-    fs.rmSync(salesMdDir, { recursive: true, force: true });
+    // Этот прогон создал здесь только seedDir (mkdirSync в before) — убираем его всегда.
+    // Уровни выше (social/, sales-md/) могли существовать до прогона с чужим содержимым —
+    // ledger.md живёт именно в social/, — поэтому снимаем их rmdir-ом, который срабатывает
+    // лишь на пустом каталоге: девственный checkout чистится целиком, а операторские файлы
+    // остаются на месте.
+    fs.rmSync(seedDir, { recursive: true, force: true });
+    try { fs.rmdirSync(path.join(salesMdDir, 'social')); } catch {}
+    try { fs.rmdirSync(salesMdDir); } catch {}
   } else {
     // Каталог существовал до прогона: export перезаписал артефакты данными черновой
     // базы — возвращаем снятое в before() (существовавшие файлы байт в байт,
