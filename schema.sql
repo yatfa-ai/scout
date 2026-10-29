@@ -37,6 +37,11 @@ CREATE TABLE IF NOT EXISTS drafts (
 );
 CREATE INDEX IF NOT EXISTS drafts_status_idx ON drafts(status);
 
+-- В drafts добавляются виды: connect (заявка с запиской) и dm (личка после реакции).
+ALTER TABLE drafts DROP CONSTRAINT IF EXISTS drafts_kind_check;
+ALTER TABLE drafts ADD CONSTRAINT drafts_kind_check
+  CHECK (kind IN ('post','comment','reply','thread','connect','dm'));
+
 -- Сообщения: наши (out) и к нам (in).
 CREATE TABLE IF NOT EXISTS interactions (
   id           text PRIMARY KEY,
@@ -96,8 +101,3 @@ CREATE TABLE IF NOT EXISTS leads (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS leads_person_uniq ON leads(person);
-
--- В drafts добавляются виды: connect (заявка с запиской) и dm (личка после реакции).
-ALTER TABLE drafts DROP CONSTRAINT IF EXISTS drafts_kind_check;
-ALTER TABLE drafts ADD CONSTRAINT drafts_kind_check
-  CHECK (kind IN ('post','comment','reply','thread','connect','dm'));
