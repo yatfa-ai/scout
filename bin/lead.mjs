@@ -1,8 +1,10 @@
 // soc lead — управление воронкой лидов.
 import { q, one, close } from '../lib/db.mjs';
+import { makeFlag, makeGuards } from '../lib/cli.mjs';
 
 const [cmd, ...rest] = process.argv.slice(2);
-const flag = (n, d = null) => { const i = rest.indexOf('--' + n); return i >= 0 ? rest[i + 1] : d; };
+const flag = makeFlag(rest);
+const { need, out } = makeGuards('throw');
 
 try {
   if (cmd === 'list') {
@@ -21,7 +23,4 @@ try {
     const id = need(rest[0], 'id лида');
     out(await one(`update leads set stage = $2, updated_at = now() where id = $1 returning id, stage`, [id, need(flag('stage', flag('to')), '--stage')]));
   } else { out('soc lead list | add --person <id> [--stage --url --pain --next] | stage <id> --stage <стадия>'); }
-
-  function out(o) { console.log(typeof o === 'string' ? o : JSON.stringify(o, null, 1)); }
-  function need(v, w) { if (!v) { throw new Error('нужно: ' + w); } return v; }
 } finally { await close(); }
