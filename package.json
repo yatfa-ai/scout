@@ -1,0 +1,15 @@
+{
+  "name": "yatfa-scout",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Human-in-the-loop approval queue, send log and lead funnel for social-media outreach",
+  "bin": { "soc": "bin/soc.mjs" },
+  "scripts": {
+    "migrate": "node bin/soc.mjs migrate",
+    "web": "node web/server.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
+}
