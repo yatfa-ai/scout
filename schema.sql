@@ -37,6 +37,11 @@ CREATE TABLE IF NOT EXISTS drafts (
 );
 CREATE INDEX IF NOT EXISTS drafts_status_idx ON drafts(status);
 
+-- Draft kinds added later: connect (connection request with a note) and dm (message after they reacted).
+ALTER TABLE drafts DROP CONSTRAINT IF EXISTS drafts_kind_check;
+ALTER TABLE drafts ADD CONSTRAINT drafts_kind_check
+  CHECK (kind IN ('post','comment','reply','thread','connect','dm'));
+
 -- Messages: ours (out) and addressed to us (in).
 CREATE TABLE IF NOT EXISTS interactions (
   id           text PRIMARY KEY,
@@ -96,8 +101,3 @@ CREATE TABLE IF NOT EXISTS leads (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS leads_person_uniq ON leads(person);
-
--- Draft kinds added later: connect (connection request with a note) and dm (message after they reacted).
-ALTER TABLE drafts DROP CONSTRAINT IF EXISTS drafts_kind_check;
-ALTER TABLE drafts ADD CONSTRAINT drafts_kind_check
-  CHECK (kind IN ('post','comment','reply','thread','connect','dm'));
