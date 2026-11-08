@@ -135,3 +135,10 @@ test('падающий запрос возвращает 500-конверт JSON
 function safeJson(text) {
   try { return JSON.parse(text); } catch { return null; }
 }
+
+test('POST с телом не-JSON отвечает 500-конвертом и не валит сервер', async () => {
+  const res = await fetch(`${baseUrl}/api/approve`, { method: 'POST', body: '{not json' });
+  assert.equal(res.status, 500);
+  assert.deepEqual(await res.json(), { error: 'тело запроса — не JSON' });
+  assert.equal((await request('GET', '/')).status, 200, 'сервер должен продолжать отвечать');
+});
