@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS interactions (
   note         text
 );
 
--- Direct questions from the market: raw material for positioning and fundraising.
+-- Direct questions from the market: raw material for positioning.
 CREATE TABLE IF NOT EXISTS questions (
   id            text PRIMARY KEY,
   date          date NOT NULL,
