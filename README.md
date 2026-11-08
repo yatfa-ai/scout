@@ -52,6 +52,16 @@ node bin/soc.mjs help           # CLI reference
 | `PORT`           | `4177`             | Port of the web screen (always bound to `127.0.0.1`) |
 | `SCOUT_DATA_DIR` | `./data`           | Where `soc export` writes and `import` reads JSONL   |
 
+## Tests
+
+```sh
+npm test
+```
+
+Built-in `node:test`, no extra dependencies. The CLI and web tests need no database. The import
+tests need a real Postgres: set `TEST_DATABASE_URL` (they create and drop a scratch database) —
+without one they are skipped.
+
 ## Backup and restore
 
 ```sh
@@ -99,9 +109,11 @@ bin/soc.mjs      agent console
 bin/lead.mjs     lead funnel
 bin/import.mjs   restore from JSONL
 lib/db.mjs       shared Postgres access
+lib/cli.mjs      flag parsing and error helpers shared by the CLIs
 schema.sql       database schema
 web/server.mjs   HTTP API + static page
 web/index.html   approval screen
+test/            node:test suites
 ```
 
 The interface and CLI messages are currently in Russian.
