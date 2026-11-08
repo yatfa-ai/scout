@@ -1,8 +1,9 @@
 # Yatfa Scout
 
-A human-in-the-loop approval queue for social-media outreach. An agent (or a person) drafts
-every text, a human approves each one individually, and only then is it sent. Scout keeps the
-queue, the send log, inbound replies, market questions and a small lead funnel in Postgres.
+A human-in-the-loop approval queue for social-media posts and replies. An agent (or a person)
+drafts the texts, a human approves each one individually, and only approved texts are meant to
+be sent. Scout keeps the queue, the send log, inbound replies, market questions and a small
+lead funnel in Postgres.
 
 Scout is the bookkeeping and the gate. It never talks to a social network itself.
 
@@ -18,8 +19,7 @@ Postgres  <--  soc   (CLI: queue, drafts, send log; used by the agent)
   `soc sent <id>` refuses any draft that is not in status `approved`.
 - **`web`** is a single screen for the approver: the queue with approve / edit / skip buttons,
   the send log, market questions, replies, leads and people.
-- **Sending happens outside the app** (by hand or by a separate script/browser agent) and only
-  for approved rows.
+- **Sending happens outside the app**, by the operator, and only for approved rows.
 
 ## Draft lifecycle
 
@@ -29,8 +29,8 @@ draft -> waiting -> approved -> sent
 ```
 
 `waiting` → (approver clicks *Send*) → `approved` → (sender posts, then `soc sent`) → `sent`.
-Approving changes **exactly one row**; no other draft is touched. One text, one approval — this
-rule lives in the data layer, not just in the UI.
+On the web screen, approving changes **exactly one row**; no other draft is touched. One text,
+one approval.
 
 ## Quick start
 
@@ -66,16 +66,17 @@ this repository. Keep backups somewhere private.
 
 `people` holds contacts; `leads` holds one row per person with a stage
 `candidate → commented → connected → talking → client | dead`. Manage it with
-`node bin/lead.mjs` (`list`, `add`, `stage`). The goal is inbound interest: comment on their
-post, wait for a reaction, send a connection note if the thread goes quiet, message directly
-only after the connection is accepted. There are no bulk messages by design.
+`node bin/lead.mjs` (run it without arguments for usage). The funnel is built around inbound
+interest: comment on their post, wait for a reaction, send a connection note if the thread goes
+quiet, message directly only after the connection is accepted. Scout has no bulk-messaging
+feature.
 
 ## Design rules
 
-- One draft, one approval. No batching, no bulk actions.
+- The approval screen works per draft: there is no bulk approve.
 - The app makes no outbound calls to social networks.
-- The web server binds to `127.0.0.1` only.
-- Secrets and personal data never enter the repository (`.env` and `data/` are git-ignored).
+- The web server binds to `127.0.0.1` only and has no authentication — keep it on localhost.
+- Secrets and personal data are kept out of the repository (`.env` and `data/` are git-ignored).
 - The schema changes only through `schema.sql`, which is idempotent.
 
 ## Layout
