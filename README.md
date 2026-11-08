@@ -64,12 +64,25 @@ this repository. Keep backups somewhere private.
 
 ## Lead funnel
 
-`people` holds contacts; `leads` holds one row per person with a stage
-`candidate → commented → connected → talking → client | dead`. Manage it with
-`node bin/lead.mjs` (run it without arguments for usage). The funnel is built around inbound
-interest: comment on their post, wait for a reaction, send a connection note if the thread goes
-quiet, message directly only after the connection is accepted. Scout has no bulk-messaging
-feature.
+`people` holds contacts; `leads` holds one row per person (`leads.person` is unique) with a
+stage, in order: `candidate` → `commented` (we commented, waiting for their move) → `connected`
+(connection accepted) → `talking` (they wrote first) → `client` | `dead`. The web screen shows
+them on the *Лиды* tab.
+
+```sh
+node bin/lead.mjs list                                      # leads by funnel stage
+node bin/lead.mjs add --person <people-id> [--stage --url --pain --next]
+node bin/lead.mjs stage <id> --stage <stage>                # move a lead to another stage
+```
+
+`add` is an upsert: calling it again updates the lead; without `--stage` the stage returns to
+`candidate`, and `--pain` / `--next` overwrite only when given.
+
+The funnel is built around inbound interest: comment on their post, wait for a reaction, send a
+connection note if the thread goes quiet, message directly only after the connection is
+accepted. Texts for the funnel go through the same draft queue as everything else, as the
+draft kinds `connect` (connection request with a note) and `dm` (message after they reacted):
+same `waiting → approved` cycle. Scout has no bulk-messaging feature.
 
 ## Design rules
 

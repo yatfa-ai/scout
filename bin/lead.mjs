@@ -20,7 +20,7 @@ try {
   } else if (cmd === 'stage') {
     const id = need(rest[0], 'id лида');
     out(await one(`update leads set stage = $2, updated_at = now() where id = $1 returning id, stage`, [id, need(flag('stage', flag('to')), '--stage')]));
-  } else { out('soc lead list | add --person <id> [--stage --url --pain --next] | stage <id> --stage <стадия>'); }
+  } else { out('node bin/lead.mjs list | add --person <id> [--stage --url --pain --next] | stage <id> --stage <стадия>'); }
 
   function out(o) { console.log(typeof o === 'string' ? o : JSON.stringify(o, null, 1)); }
   function need(v, w) { if (!v) { throw new Error('нужно: ' + w); } return v; }
