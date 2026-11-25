@@ -1,0 +1,6 @@
+# Yatfa Scout v2 (web-django). Minimal dependency set by decision: no Celery,
+# no Redis, no HTMX, no docker.
+Django==5.2.19
+# The binary wheel ships libpq, so installing needs no local Postgres headers.
+psycopg[binary]==3.3.9
+django-environ==0.14.0

@@ -51,6 +51,9 @@ node bin/soc.mjs help           # CLI reference
 | `DATABASE_URL`   | read from `.env`   | Postgres connection string                           |
 | `PORT`           | `4177`             | Port of the web screen (always bound to `127.0.0.1`) |
 | `SCOUT_DATA_DIR` | `./data`           | Where `soc export` writes and `import` reads JSONL   |
+| `SECRET_KEY`     | read from `.env`   | Django secret key (`web-django/` only), never committed |
+| `DEBUG`          | off                | Django debug mode (`web-django/` only)               |
+| `SCOUT_ENV_FILE` | `./.env`           | Which dotenv file `web-django/` reads                |
 
 ## Tests
 
@@ -63,6 +66,52 @@ database, and neither do the usage checks of the `lead` CLI, the `soc revise` he
 `soc add --status` refusals. The import tests, the `lead` funnel checks, the `soc revise` status
 guard and the `soc add` row checks need a real Postgres: set `TEST_DATABASE_URL` (they create and
 drop a scratch database) — without one those tests are skipped.
+
+## web-django
+
+The Django 5 rebuild (v2) lives in `web-django/` and adopts this same `social` database: every
+model is unmanaged, so it issues no DDL and changes no data. This first slice ships the Django
+admin over the six existing tables and nothing else.
+
+**The Node app (`npm run web`, port 4177) remains the primary UI** until the acceptance-parity
+slice of the rebuild is done.
+
+```sh
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r web-django/requirements.txt
+cp .env.example .env                 # set DATABASE_URL and SECRET_KEY, and DEBUG=1 for local work
+cd web-django && python manage.py runserver 127.0.0.1:8000   # http://127.0.0.1:8000/admin/
+```
+
+Settings read `DATABASE_URL`, `SECRET_KEY` and `DEBUG` from the environment, or from the
+repo-root `.env` that `lib/db.mjs` already reads. `DATABASE_URL` and `SECRET_KEY` have no
+fallbacks: a missing value is a boot failure, the same way `loadEnv()` throws. `DEBUG` is off
+unless set — turn it on locally, because `runserver` serves the admin's CSS and JS only with
+`DEBUG` on.
+
+The admin needs a Django user, and Django keeps its users, sessions and admin log in its own
+tables, which the `social` database does not have yet. Creating them is a one-time
+
+```sh
+cd web-django && python manage.py migrate && python manage.py createsuperuser
+```
+
+This is safe and was verified on a copy of the schema: all six Scout models are unmanaged, so
+`migrate` emits no DDL for them — it only adds Django's own `auth_*`, `django_*` tables, and
+`people`, `drafts`, `interactions`, `questions`, `ledger` and `leads` come out byte-identical,
+constraints, indexes and rows included. The schema of those six still changes only through
+`schema.sql`.
+
+Its invariant tests need neither a database nor any configured variable:
+
+```sh
+cd web-django && python -m unittest discover -s tests -t .
+```
+
+They pin the environment contract and the fail-fast, the loopback-only `ALLOWED_HOSTS`, that
+every model stays unmanaged, that no HTTP client is imported anywhere under `web-django/`, and
+that `.env` stays git-ignored with no secrets in tracked files. `npm test` is untouched:
+`node --test` discovers JS tests only.
 
 ## Backup and restore
 
@@ -116,6 +165,7 @@ schema.sql       database schema
 web/server.mjs   HTTP API + static page
 web/index.html   approval screen
 test/            node:test suites
+web-django/      Django 5 rebuild (v2): unmanaged models over the same database + admin
 ```
 
 The interface and CLI messages are currently in Russian.
