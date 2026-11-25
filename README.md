@@ -59,10 +59,10 @@ npm test
 ```
 
 Built-in `node:test`, no extra dependencies. The web tests and the `soc` CLI usage checks need no
-database, and neither do the usage checks of the `lead` CLI or the `soc revise` help check. The
-import tests, the `lead` funnel checks and the `soc revise` status guard need a real Postgres: set
-`TEST_DATABASE_URL` (they create and drop a scratch database) — without one those tests are
-skipped.
+database, and neither do the usage checks of the `lead` CLI, the `soc revise` help check or the
+`soc add --status` refusals. The import tests, the `lead` funnel checks, the `soc revise` status
+guard and the `soc add` row checks need a real Postgres: set `TEST_DATABASE_URL` (they create and
+drop a scratch database) — without one those tests are skipped.
 
 ## Backup and restore
 
