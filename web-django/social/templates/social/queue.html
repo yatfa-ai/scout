@@ -1,0 +1,112 @@
+{% comment %}
+The approval queue, server-rendered. No JavaScript: the v2 anti-goals
+(knowledge scout-3) rule out a JS framework, so every action is a form POST
+that redirects back here. The card fields and the button split mirror
+`waiting()` in `web/index.html`: «Отправляй / Правка / Пропустить» on a
+`waiting` draft, «Отозвать» on an approved one.
+{% endcomment %}<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scout — очередь</title>
+<style>
+  :root { --bg:#f6f6f3; --card:#fff; --ink:#161614; --mute:#6b6b64; --line:#e3e2da; --accent:#2a78d6; --ok:#0a7a2f; --warn:#b45309; --bad:#b42318; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141413; --card:#1d1d1b; --ink:#ecebe6; --mute:#9a9a92; --line:#2e2e2b; --accent:#6aa8ff; --ok:#4cc77a; --warn:#e0a24a; --bad:#ff7a6e; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 "Segoe UI",system-ui,sans-serif; }
+  header { padding:20px 24px 0; display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+  h1 { margin:0; font-size:20px; }
+  main { padding:20px 24px 60px; max-width:960px; }
+  .sub, .meta { color:var(--mute); font-size:13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:16px; }
+  .meta { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+  .tag { border:1px solid var(--line); border-radius:6px; padding:0 8px; }
+  .note { margin:6px 0 10px; }
+  pre.text, textarea { width:100%; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:12px; font:14px/1.55 "Segoe UI",system-ui,sans-serif; color:var(--ink); white-space:pre-wrap; margin:0; }
+  textarea { min-height:140px; resize:vertical; }
+  .facts, .ask { font-size:13px; color:var(--mute); margin-top:10px; }
+  .ask { color:var(--warn); }
+  .actions { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; align-items:flex-start; }
+  .actions form { display:flex; gap:6px; align-items:flex-start; margin:0; }
+  details.edit { flex:1 1 100%; }
+  details.edit summary { display:inline-block; list-style:none; }
+  details.edit summary::-webkit-details-marker { display:none; }
+  details.edit form { flex-direction:column; align-items:stretch; margin-top:8px; }
+  details.edit .btn.go { align-self:flex-start; }
+  .btn { border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:8px; padding:8px 14px; font:inherit; cursor:pointer; }
+  .btn.go { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  input[type=text] { border:1px solid var(--line); border-radius:8px; padding:8px 10px; font:inherit; background:var(--bg); color:var(--ink); min-width:220px; }
+  .approved { border-color:var(--ok); }
+  .approved .stamp { color:var(--ok); font-weight:600; }
+  .help { color:var(--mute); font-size:13px; margin:0 0 16px; }
+  .messages { list-style:none; margin:16px 24px 0; padding:0; max-width:960px; }
+  .messages li { border:1px solid var(--line); border-left:4px solid var(--warn); border-radius:8px; background:var(--card); padding:10px 14px; margin-bottom:8px; }
+  .messages li.error { border-left-color:var(--bad); }
+  .empty { color:var(--mute); padding:30px 0; text-align:center; }
+  a { color:var(--accent); }
+  @media (max-width:640px) { main, header, .messages { padding-left:14px; padding-right:14px; margin-left:0; margin-right:0; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Scout — очередь утверждения</h1>
+  <span class="sub">{{ waiting_count }} ждёт · {{ approved_count }} утверждено</span>
+</header>
+
+{% if messages %}
+<ul class="messages">
+  {% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+<main>
+<p class="help">«Отправляй» относится только к этой карточке: другие черновики не трогаются. После нажатия агент отправит текст и перенесёт карточку в «Ушло». «Правка» возвращает карточку в ожидание: утверждать придётся заново.</p>
+{% for draft in drafts %}
+<article class="card{% if draft.status == 'approved' %} approved{% endif %}">
+  <div class="meta">
+    <span class="tag">{{ draft.get_network_display }}</span>
+    <span class="tag">{{ draft.get_kind_display }}</span>
+    {% if draft.target_url %}<a href="{{ draft.target_url }}" target="_blank" rel="noopener">куда</a>{% endif %}
+    {% if draft.status == 'approved' %}<span class="stamp">утверждено {{ draft.approved_at|date:"d.m H:i" }} — агент отправит</span>{% endif %}
+  </div>
+  {% if draft.target_note %}<div class="note">{{ draft.target_note }}</div>{% endif %}
+  <pre class="text">{{ draft.body }}</pre>
+  {% if draft.facts %}<div class="facts"><b>Факты:</b> {{ draft.facts }}</div>{% endif %}
+  {% if draft.question %}<div class="ask"><b>Вопрос к тебе:</b> {{ draft.question }}</div>{% endif %}
+  <div class="actions">
+    {% if draft.status == 'waiting' %}
+      <form method="post" action="{% url 'queue_approve' %}">
+        {% csrf_token %}<input type="hidden" name="id" value="{{ draft.id }}">
+        <button class="btn go" type="submit">Отправляй</button>
+      </form>
+      <form method="post" action="{% url 'queue_skip' %}">
+        {% csrf_token %}<input type="hidden" name="id" value="{{ draft.id }}">
+        <input type="text" name="reason" placeholder="почему пропускаем (можно пусто)">
+        <button class="btn" type="submit">Пропустить</button>
+      </form>
+      {% comment %} The editor is collapsed, so the body is not shown twice.
+      `details` opens it with no JavaScript, the way `edit()` does in
+      web/index.html. {% endcomment %}
+      <details class="edit">
+        <summary class="btn">Правка</summary>
+        <form method="post" action="{% url 'queue_edit' %}">
+          {% csrf_token %}<input type="hidden" name="id" value="{{ draft.id }}">
+          <textarea name="body" aria-label="текст черновика">{{ draft.body }}</textarea>
+          <button class="btn go" type="submit">Сохранить правку</button>
+        </form>
+      </details>
+    {% else %}
+      <form method="post" action="{% url 'queue_unapprove' %}">
+        {% csrf_token %}<input type="hidden" name="id" value="{{ draft.id }}">
+        <button class="btn" type="submit">Отозвать</button>
+      </form>
+    {% endif %}
+  </div>
+</article>
+{% empty %}
+<div class="empty">Ничего не ждёт. Агент принесёт новое сюда.</div>
+{% endfor %}
+</main>
+</body>
+</html>
