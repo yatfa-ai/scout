@@ -136,9 +136,56 @@ function safeJson(text) {
   try { return JSON.parse(text); } catch { return null; }
 }
 
-test('POST с телом не-JSON отвечает 500-конвертом и не валит сервер', async () => {
-  const res = await fetch(`${baseUrl}/api/approve`, { method: 'POST', body: '{not json' });
-  assert.equal(res.status, 500);
-  assert.deepEqual(await res.json(), { error: 'тело запроса — не JSON' });
+// Контракт разбора тела (readBody в web/server.mjs). Все четыре POST-маршрута
+// берут тело из одного readBody, поэтому пин идёт по всему набору, а не по
+// одному маршруту: ошибка разбора обязана ОТКЛОНИТЬ промис, чтобы её увидел
+// внешний catch маршрута, — иначе процесс либо падает, либо висит навсегда.
+const POST_ROUTES = ['/api/approve', '/api/unapprove', '/api/edit', '/api/skip'];
+const BODY_NOT_JSON_ENVELOPE = { error: 'тело запроса — не JSON' };
+
+// Сырое тело: request() всегда отдаёт JSON.stringify, а здесь нужен именно не-JSON.
+// AbortSignal держит тест конечным: если readBody проглотит ошибку разбора, не
+// отклонив промис, ответ не придёт никогда — тогда падает тест, а не висит сьют.
+const postRaw = async (urlPath, raw) => {
+  const res = await fetch(`${baseUrl}${urlPath}`, {
+    method: 'POST',
+    body: raw,
+    signal: AbortSignal.timeout(5_000),
+  });
+  return { status: res.status, contentType: res.headers.get('content-type') || '', text: await res.text() };
+};
+
+test('каждый POST-маршрут на теле не-JSON отвечает 500-конвертом «тело запроса — не JSON» и не валит сервер', async () => {
+  for (const urlPath of POST_ROUTES) {
+    for (const raw of ['garbage-not-json', '{"id":1,']) { // мусор и оборванный JSON
+      const r = await postRaw(urlPath, raw);
+      assert.equal(r.status, 500, `${urlPath} (${raw}): статус`);
+      assert.ok(isJson(r), `${urlPath} (${raw}): content-type ${r.contentType}`);
+      assert.deepEqual(safeJson(r.text), BODY_NOT_JSON_ENVELOPE, `${urlPath} (${raw})`);
+    }
+  }
+  // Процесс пережил все восемь запросов: следующий запрос получает настоящий ответ.
   assert.equal((await request('GET', '/')).status, 200, 'сервер должен продолжать отвечать');
+});
+
+test('пустое тело проходит разбор как {}: ошибка приходит из базы, а не из readBody', async () => {
+  const r = await postRaw('/api/approve', '');
+  assert.equal(r.status, 500);
+  assert.ok(isJson(r), `content-type: ${r.contentType}`);
+  // Маршруты деструктурируют { id } из результата readBody, поэтому пустое тело
+  // обязано разобраться в {} и дойти до запроса в базу — ошибка тогда не про разбор.
+  assert.notDeepEqual(safeJson(r.text), BODY_NOT_JSON_ENVELOPE, `тело: ${r.text}`);
+});
+
+test('валидный JSON сразу после тела не-JSON доходит до маршрута', async () => {
+  assert.deepEqual(
+    safeJson((await postRaw('/api/approve', 'garbage-not-json')).text),
+    BODY_NOT_JSON_ENVELOPE,
+    'первый запрос должен быть отклонён разбором',
+  );
+  const r = await request('POST', '/api/approve', { id: 1 });
+  assert.equal(r.status, 500);
+  assert.ok(isJson(r), `content-type: ${r.contentType}`);
+  // Прошёл readBody и упал уже на базе: разбор не «залип» после предыдущего тела.
+  assert.notDeepEqual(safeJson(r.text), BODY_NOT_JSON_ENVELOPE, `тело: ${r.text}`);
 });
