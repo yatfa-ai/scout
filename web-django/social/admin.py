@@ -2,7 +2,8 @@
 
 Per the v2 conventions (knowledge scout-3) the admin is how people, leads,
 questions and the send log are maintained; only the approval queue gets a
-custom UI, in a later slice. All six tables are registered here.
+custom UI, in a later slice. All six tables are registered here, `drafts`
+view-only because the queue owns its writes (see `DraftsAdmin`).
 """
 
 from django.contrib import admin
@@ -24,10 +25,35 @@ class PeopleAdmin(admin.ModelAdmin):
 
 @admin.register(Drafts)
 class DraftsAdmin(admin.ModelAdmin):
+    """View-only: the approval queue owns every write to `drafts`.
+
+    `drafts` is the approval queue, and each of its transitions carries a
+    consequence a generic change form cannot express — `sent` is refused
+    unless the row is `approved`, approving moves exactly one `waiting` row,
+    and editing a body resets the row to `waiting` and clears its approval.
+    The queue is the only surface that holds those together: `web/server.mjs`
+    today, the Django queue UI in a later slice (knowledge scout-3 decisions 3
+    and 4 — the admin is the ops surface for people, leads, questions and the
+    ledger, and the queue gets a custom UI).
+
+    So the listing and detail page stay, for inspection, and nothing writes:
+    removing the three write permissions also empties `get_actions`, because
+    Django filters `delete_selected` on `has_delete_permission`.
+    """
+
     list_display = ('id', 'network', 'kind', 'status', 'target_person', 'created_at', 'sent_at')
     list_filter = ('status', 'network', 'kind')
     search_fields = ('body', 'target_note', 'target_url')
     ordering = ('-created_at',)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(Interactions)
