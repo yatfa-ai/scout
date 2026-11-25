@@ -58,10 +58,11 @@ node bin/soc.mjs help           # CLI reference
 npm test
 ```
 
-Built-in `node:test`, no extra dependencies. The `soc` CLI and web tests need no database, and so
-do the usage checks of the `lead` CLI. The import tests and the `lead` funnel checks need a real
-Postgres: set `TEST_DATABASE_URL` (they create and drop a scratch database) — without one those
-tests are skipped.
+Built-in `node:test`, no extra dependencies. The web tests and the `soc` CLI usage checks need no
+database, and neither do the usage checks of the `lead` CLI or the `soc revise` help check. The
+import tests, the `lead` funnel checks and the `soc revise` status guard need a real Postgres: set
+`TEST_DATABASE_URL` (they create and drop a scratch database) — without one those tests are
+skipped.
 
 ## Backup and restore
 
