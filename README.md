@@ -73,9 +73,9 @@ The Django 5 rebuild (v2) lives in `web-django/` and adopts this same `social` d
 model is unmanaged, so it issues no DDL and changes no data. What it serves today:
 
 - **`/` and `/queue/` — the approval queue**, the only surface that writes `drafts`: approve,
-  unapprove, edit and skip, each a form POST through the same guarded transitions the CLI uses.
-  `/` redirects there, and for a visitor who is not logged in it ends at the admin login and
-  comes back to the queue afterwards.
+  unapprove, edit and skip, each a form POST through the same guarded transitions as the Node
+  web app (`web/server.mjs`, the parity reference). `/` redirects there, and for a visitor who
+  is not logged in it ends at the admin login and comes back to the queue afterwards.
 - **The admin over the six tables**, reachable from the queue's tab row: the send log («Ушло»),
   leads, market questions, the replies to us (`direction = in`) and people. Its changelists
   carry the content the Node screen puts in front of the operator, so each pane is readable
