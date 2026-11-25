@@ -1,5 +1,5 @@
-// Пины HTTP-контракта web/server.mjs. Первый тест-сьют репозитория: runner — встроенный
-// node:test, ноль новых зависимостей.
+// Пины HTTP-контракта web/server.mjs. Runner — встроенный node:test, ноль новых
+// зависимостей.
 //
 // DB-free by design: сервер стартует как child process с фиктивным DATABASE_URL
 // на эфемерном порту, и любой маршрут, дошедший до Postgres, детерминированно
@@ -100,6 +100,19 @@ test('неизвестный маршрут отвечает 404-конверт�
   assert.deepEqual(JSON.parse(r.text), UNKNOWN_ROUTE_ENVELOPE);
   // no-store держит тексты черновиков и состояние утверждения вне промежуточных кэшей.
   assert.equal(r.cacheControl, 'no-store');
+});
+
+// Поверхность паритета — ровно пять эндпоинтов API плюс GET / (инвариант 6, знание
+// scout-2), поэтому путь вне неё обязан отвечать 404-конвертом неизвестного маршрута.
+// /chart.png взят как путь-проба раздачи картинки: пин держит его вне маршрутной
+// таблицы, чтобы отдача файла (тем более из каталога за пределами репозитория) не
+// появилась молча и не разошлась с Django-версией v2.
+test('GET /chart.png не обслуживается: 404-конверт неизвестного маршрута, а не картинка', async () => {
+  const r = await request('GET', '/chart.png');
+  assert.equal(r.status, 404);
+  assert.ok(isJson(r), `content-type: ${r.contentType}`);
+  assert.deepEqual(JSON.parse(r.text), UNKNOWN_ROUTE_ENVELOPE);
+  assert.ok(!r.contentType.startsWith('image/'), `content-type: ${r.contentType}`);
 });
 
 test('пять эндпоинтов API зарегистрированы: каждый отвечает JSON и никогда — 404-конвертом неизвестного маршрута', async () => {
