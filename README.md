@@ -116,8 +116,8 @@ that `.env` stays git-ignored with no secrets in tracked files. `npm test` is un
 ## Backup and restore
 
 ```sh
-node bin/soc.mjs export         # people, interactions, questions, drafts, ledger -> data/*.jsonl
-node bin/import.mjs             # load people, interactions, questions, ledger back (safe to re-run)
+node bin/soc.mjs export         # people, interactions, questions, drafts, ledger, leads -> data/*.jsonl
+node bin/import.mjs             # load people, drafts, interactions, questions, ledger, leads back (safe to re-run)
 ```
 
 `data/` is git-ignored: it contains real contacts and message text, so it does not belong in
@@ -152,6 +152,13 @@ same `waiting → approved` cycle. Scout has no bulk-messaging feature.
 - The web server binds to `127.0.0.1` only and has no authentication — keep it on localhost.
 - Secrets and personal data are kept out of the repository (`.env` and `data/` are git-ignored).
 - The schema changes only through `schema.sql`, which is idempotent.
+
+## Extending Scout
+
+Scout stays a queue and a record. Anything that connects to a platform lives in a separate add-on
+outside this repository: it reads approved drafts from the same database and records the outcome
+with `soc sent <id> --url <link>`. Each add-on follows the terms of the platforms it connects to and
+is maintained by whoever runs it.
 
 ## Layout
 

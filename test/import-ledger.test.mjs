@@ -188,3 +188,41 @@ test('двойной запуск import оставляет ledger без изм
   assert.equal(second.code, 0, `второй import упал:\n${second.output}`);
   assert.deepEqual(await ledgerRows(), snapshot, 'второй запуск import изменил содержимое ledger');
 });
+
+test('export -> чистая база -> import возвращает черновики, связь interactions.draft_id и лиды с теми же id', { timeout: 60_000 }, async t => {
+  if (!dbUrl) return t.skip(dbNeeded);
+  const lead = await runCli(path.join(repoRoot, 'bin', 'lead.mjs'),
+    ['add', '--person', 'p-test', '--stage', 'commented', '--pain', 'боль', '--next', 'ждать']);
+  assert.equal(lead.code, 0, `lead add упал:\n${lead.output}`);
+
+  const snap = async () => ({
+    drafts: await sql('select id, status, body, sent_url from drafts order by id'),
+    links: await sql('select id, draft_id from interactions where draft_id is not null order by id'),
+    leads: await sql('select id, person, stage, pain, next_step from leads order by id'),
+  });
+  const before = await snap();
+  assert.ok(before.drafts.length > 0 && before.links.length > 0 && before.leads.length === 1, 'сид не создал строк');
+
+  const exported = await runCli(socPath, ['export', '--dir', seedDir]);
+  assert.equal(exported.code, 0, `soc export упал:\n${exported.output}`);
+  assert.ok(fs.existsSync(path.join(seedDir, 'leads.jsonl')), 'soc export не выгрузил leads.jsonl');
+
+  await sql('truncate people, drafts, interactions, questions, ledger, leads restart identity cascade');
+  const imported = await runCli(importPath, []);
+  assert.equal(imported.code, 0, `import упал:\n${imported.output}`);
+  assert.deepEqual(await snap(), before, 'черновики, связи или лиды восстановились не так, как были выгружены');
+
+  // последовательности сдвинуты: новый черновик и новый лид не упираются в PK
+  const next = await runCli(socPath, ['add', '--network', 'linkedin', '--kind', 'comment', '--url', 'https://example.com/p2', '--note', 'n', '--body', 'b']);
+  assert.equal(next.code, 0, `soc add после restore упал:\n${next.output}`);
+});
+
+test('soc export пишет SQL date как день (YYYY-MM-DD), а не как момент времени: дата не сдвигается между часовыми поясами', { timeout: 60_000 }, async t => {
+  if (!dbUrl) return t.skip(dbNeeded);
+  const exported = await runCli(socPath, ['export', '--dir', seedDir]);
+  assert.equal(exported.code, 0, `soc export упал:\n${exported.output}`);
+  const lines = f => fs.readFileSync(path.join(seedDir, f + '.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  for (const [f, col] of [['questions', 'date'], ['people', 'first_seen']]) {
+    for (const r of lines(f)) assert.match(String(r[col]), /^\d{4}-\d{2}-\d{2}$/, `${f}.${col} выгружен как ${r[col]}`);
+  }
+});

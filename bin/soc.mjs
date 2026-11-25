@@ -127,7 +127,7 @@ const commands = {
   async export() {
     const dir = flag('dir', dataDir);
     fs.mkdirSync(dir, { recursive: true });
-    for (const [t, order] of [['people', 'id'], ['interactions', 'ts, id'], ['questions', 'id'], ['drafts', 'id'], ['ledger', 'id']]) {
+    for (const [t, order] of [['people', 'id'], ['interactions', 'ts, id'], ['questions', 'id'], ['drafts', 'id'], ['ledger', 'id'], ['leads', 'id']]) {
       const rows = await q(`select * from ${t} order by ${order}`);
       fs.writeFileSync(path.join(dir, t + '.jsonl'), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
     }

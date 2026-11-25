@@ -1,4 +1,4 @@
-// Restore from JSONL backups (people, interactions, questions, ledger) written by `soc export`.
+// Restore from JSONL backups (people, drafts, interactions, questions, ledger, leads) written by `soc export`.
 // Reads SCOUT_DATA_DIR (default ./data) or --dir <path>. Safe to re-run: existing rows are kept.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,13 +25,23 @@ try {
       [p.id, p.name, p.network, p.profile, p.headline, p.followers, p.segment, p.relevance, p.first_seen, p.status]);
   }
 
+  // drafts before interactions: interactions.draft_id points at them. Ids are kept, the sequence moves past them.
+  const draftCols = ['id', 'network', 'kind', 'status', 'target_person', 'target_url', 'target_note', 'body', 'facts',
+    'question', 'created_at', 'approved_at', 'sent_at', 'sent_url', 'skip_reason'];
+  for (const r of read('drafts')) {
+    await cli.query(
+      `insert into drafts (${draftCols}) values (${draftCols.map((_, n) => '$' + (n + 1))}) on conflict (id) do nothing`,
+      draftCols.map(c => r[c] ?? null));
+  }
+  await cli.query(`select setval(pg_get_serial_sequence('drafts','id'), max(id)) from drafts having max(id) is not null`);
+
   const inter = read('interactions');
   for (const r of inter) {           // insert without in_reply_to first, so row order does not matter
     await cli.query(
-      `insert into interactions (id,ts,network,direction,kind,person,post_url,parent_url,text,draft_ref,stats,note)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) on conflict (id) do nothing`,
+      `insert into interactions (id,ts,network,direction,kind,person,post_url,parent_url,text,draft_id,draft_ref,stats,note)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) on conflict (id) do nothing`,
       [r.id, r.ts, r.network, r.direction, r.kind, r.person, r.post_url, r.parent_url ?? null, r.text,
-       r.draft_ref ?? r.draft ?? null, r.stats ? JSON.stringify(r.stats) : null, r.note ?? null]);
+       r.draft_id ?? null, r.draft_ref ?? r.draft ?? null, r.stats ? JSON.stringify(r.stats) : null, r.note ?? null]);
   }
   for (const r of inter.filter(x => x.in_reply_to)) {
     await cli.query(`update interactions set in_reply_to = $2 where id = $1`, [r.id, r.in_reply_to]);
@@ -52,9 +62,19 @@ try {
   }
   await cli.query(`select setval(pg_get_serial_sequence('ledger','id'), max(id)) from ledger having max(id) is not null`);
 
+  // leads: one per person (leads_person_uniq), so a lead already in the database is kept as is.
+  for (const r of read('leads')) {
+    await cli.query(
+      `insert into leads (id,person,stage,source_url,pain,next_step,created_at,updated_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8) on conflict do nothing`,
+      [r.id, r.person, r.stage, r.source_url ?? null, r.pain ?? null, r.next_step ?? null, r.created_at, r.updated_at ?? r.created_at]);
+  }
+  await cli.query(`select setval(pg_get_serial_sequence('leads','id'), max(id)) from leads having max(id) is not null`);
+
   await cli.query('commit');
   const c = await q(`select (select count(*) from people) p, (select count(*) from interactions) i,
-                            (select count(*) from questions) qn, (select count(*) from ledger) l`);
+                            (select count(*) from questions) qn, (select count(*) from ledger) l,
+                            (select count(*) from drafts) d, (select count(*) from leads) ld`);
   console.log('перенесено:', JSON.stringify(c[0]));
 } catch (e) {
   await cli.query('rollback');
