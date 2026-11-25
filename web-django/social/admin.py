@@ -2,8 +2,8 @@
 
 Per the v2 conventions (knowledge scout-3) the admin is how people, leads,
 questions and the send log are maintained; only the approval queue gets a
-custom UI, in a later slice. All six tables are registered here, `drafts`
-view-only because the queue owns its writes (see `DraftsAdmin`).
+custom UI, and it has one: `/queue/`. All six tables are registered here,
+`drafts` view-only because that queue owns its writes (see `DraftsAdmin`).
 
 The changelists carry the content the Node screen (`web/index.html`, the
 parity reference) puts in front of the operator, so each of its panes is
@@ -26,6 +26,15 @@ from .models import Drafts, Interactions, Leads, Ledger, People, Questions
 admin.site.site_header = 'Yatfa Scout — админка'
 admin.site.site_title = 'Yatfa Scout'
 admin.site.index_title = 'Данные социального присутствия'
+# «Открыть сайт» in the admin header, the one outbound link the admin offers.
+# Unset, it defaults to `/`, which this project did not serve at all until the
+# root route landed beside this line — and even now `/` is only a redirect to
+# the queue, so pointing straight at the queue saves the hop and says where
+# the link goes. The stock `admin/base.html` renders whatever
+# `AdminSite.each_context` puts here, so this one line replaces a custom
+# `AdminSite` or a `base_site.html` override. The login page carries no such
+# link: Django renders the site link only in the authenticated staff header.
+admin.site.site_url = '/queue/'
 
 # Long enough for the first sentence of a reply or a question, short enough to
 # leave the scanning columns beside it readable.
@@ -109,7 +118,7 @@ class DraftsAdmin(admin.ModelAdmin):
     unless the row is `approved`, approving moves exactly one `waiting` row,
     and editing a body resets the row to `waiting` and clears its approval.
     The queue is the only surface that holds those together: `web/server.mjs`
-    today, the Django queue UI in a later slice (knowledge scout-3 decisions 3
+    and this project's own `/queue/` page (knowledge scout-3 decisions 3
     and 4 — the admin is the ops surface for people, leads, questions and the
     ledger, and the queue gets a custom UI).
 

@@ -4,6 +4,12 @@ The approval queue, server-rendered. No JavaScript: the v2 anti-goals
 that redirects back here. The card fields and the button split mirror
 `waiting()` in `web/index.html`: «Отправляй / Правка / Пропустить» on a
 `waiting` draft, «Отозвать» on an approved one.
+
+The nav row mirrors `TABS` in `web/index.html`, with the five panes the Node
+screen renders from `/api/state` pointing at the admin changelists that carry
+the same content. «Ждёт тебя» is this page, so it is the current tab and not a
+link; its badge is the `waiting_count` the header already shows, so the nav
+costs no extra query.
 {% endcomment %}<!doctype html>
 <html lang="ru">
 <head>
@@ -40,12 +46,16 @@ that redirects back here. The card fields and the button split mirror
   .approved { border-color:var(--ok); }
   .approved .stamp { color:var(--ok); font-weight:600; }
   .help { color:var(--mute); font-size:13px; margin:0 0 16px; }
+  nav { display:flex; gap:4px; padding:12px 24px 0; flex-wrap:wrap; border-bottom:1px solid var(--line); }
+  nav a, nav span.on { padding:8px 14px; color:var(--mute); border-bottom:2px solid transparent; text-decoration:none; }
+  nav span.on { color:var(--ink); border-color:var(--accent); font-weight:600; }
+  nav .badge { background:var(--accent); color:#fff; border-radius:10px; padding:0 7px; font-size:12px; margin-left:6px; }
   .messages { list-style:none; margin:16px 24px 0; padding:0; max-width:960px; }
   .messages li { border:1px solid var(--line); border-left:4px solid var(--warn); border-radius:8px; background:var(--card); padding:10px 14px; margin-bottom:8px; }
   .messages li.error { border-left-color:var(--bad); }
   .empty { color:var(--mute); padding:30px 0; text-align:center; }
   a { color:var(--accent); }
-  @media (max-width:640px) { main, header, .messages { padding-left:14px; padding-right:14px; margin-left:0; margin-right:0; } }
+  @media (max-width:640px) { main, header, nav, .messages { padding-left:14px; padding-right:14px; margin-left:0; margin-right:0; } }
 </style>
 </head>
 <body>
@@ -53,6 +63,20 @@ that redirects back here. The card fields and the button split mirror
   <h1>Scout — очередь утверждения</h1>
   <span class="sub">{{ waiting_count }} ждёт · {{ approved_count }} утверждено</span>
 </header>
+
+<nav>
+  <span class="on">Ждёт тебя{% if waiting_count %}<span class="badge">{{ waiting_count }}</span>{% endif %}</span>
+  {% comment %} «Ушло» is the ledger, not a `sent` listing: `sent()` in
+  web/index.html renders `S.ledger`. «Ответы нам» carries the admin's own
+  filter value, so the tab lands on `direction = 'in'` — the set that pane
+  shows — rather than on every interaction. {% endcomment %}
+  <a href="{% url 'admin:social_ledger_changelist' %}">Ушло</a>
+  <a href="{% url 'admin:social_leads_changelist' %}">Лиды</a>
+  <a href="{% url 'admin:social_questions_changelist' %}">Вопросы рынка</a>
+  <a href="{% url 'admin:social_interactions_changelist' %}?direction__exact=in">Ответы нам</a>
+  <a href="{% url 'admin:social_people_changelist' %}">Люди</a>
+  <a href="{% url 'admin:index' %}">Админка</a>
+</nav>
 
 {% if messages %}
 <ul class="messages">

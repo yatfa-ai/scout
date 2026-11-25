@@ -70,8 +70,17 @@ drop a scratch database) — without one those tests are skipped.
 ## web-django
 
 The Django 5 rebuild (v2) lives in `web-django/` and adopts this same `social` database: every
-model is unmanaged, so it issues no DDL and changes no data. This first slice ships the Django
-admin over the six existing tables and nothing else.
+model is unmanaged, so it issues no DDL and changes no data. What it serves today:
+
+- **`/` and `/queue/` — the approval queue**, the only surface that writes `drafts`: approve,
+  unapprove, edit and skip, each a form POST through the same guarded transitions the CLI uses.
+  `/` redirects there, and for a visitor who is not logged in it ends at the admin login and
+  comes back to the queue afterwards.
+- **The admin over the six tables**, reachable from the queue's tab row: the send log («Ушло»),
+  leads, market questions, the replies to us (`direction = in`) and people. Its changelists
+  carry the content the Node screen puts in front of the operator, so each pane is readable
+  without opening a detail page. `drafts` is listed there too, but view-only — the queue owns
+  its writes.
 
 **The Node app (`npm run web`, port 4177) remains the primary UI** until the acceptance-parity
 slice of the rebuild is done.
@@ -80,7 +89,7 @@ slice of the rebuild is done.
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r web-django/requirements.txt
 cp .env.example .env                 # set DATABASE_URL and SECRET_KEY, and DEBUG=1 for local work
-cd web-django && python manage.py runserver 127.0.0.1:8000   # http://127.0.0.1:8000/admin/
+cd web-django && python manage.py runserver 127.0.0.1:8000   # http://127.0.0.1:8000/
 ```
 
 Settings read `DATABASE_URL`, `SECRET_KEY` and `DEBUG` from the environment, or from the
@@ -89,8 +98,9 @@ fallbacks: a missing value is a boot failure, the same way `loadEnv()` throws. `
 unless set — turn it on locally, because `runserver` serves the admin's CSS and JS only with
 `DEBUG` on.
 
-The admin needs a Django user, and Django keeps its users, sessions and admin log in its own
-tables, which the `social` database does not have yet. Creating them is a one-time
+The admin needs a Django user, and the queue is staff-only too, so the same login gates both.
+Django keeps its users, sessions and admin log in its own tables, which the `social` database
+does not have yet. Creating them is a one-time
 
 ```sh
 cd web-django && python manage.py migrate && python manage.py createsuperuser
@@ -102,16 +112,22 @@ This is safe and was verified on a copy of the schema: all six Scout models are 
 constraints, indexes and rows included. The schema of those six still changes only through
 `schema.sql`.
 
-Its invariant tests need neither a database nor any configured variable:
+Its tests:
 
 ```sh
 cd web-django && python -m unittest discover -s tests -t .
 ```
 
 They pin the environment contract and the fail-fast, the loopback-only `ALLOWED_HOSTS`, that
-every model stays unmanaged, that no HTTP client is imported anywhere under `web-django/`, and
-that `.env` stays git-ignored with no secrets in tracked files. `npm test` is untouched:
-`node --test` discovers JS tests only.
+every model stays unmanaged, that no HTTP client is imported anywhere under `web-django/`, that
+`.env` stays git-ignored with no secrets in tracked files, that `drafts` stays view-only in the
+admin, and the front door: `/` goes to the queue, «Открыть сайт» in the admin goes there too,
+and the queue's tab row goes to the right admin pane. The configuration half of all that needs
+neither a database nor a configured variable. The half that renders pages — the queue's
+transitions, the changelist columns, where a URL actually lands — needs a real Postgres: those
+checks build and drop a scratch database from `schema.sql`, the way the JS tests do, so set
+`TEST_DATABASE_URL`. Without one they are skipped and say so, and the rest of the suite still
+runs. `npm test` is untouched: `node --test` discovers JS tests only.
 
 ## Backup and restore
 
