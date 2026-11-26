@@ -564,9 +564,11 @@ class ResubmittingUnderAnotherKeyTest(AdminKeyWriteTestCase):
 
         self.assertSaved(result, "resubmitting a question with the neighbour's id")
         after = _row('questions', Q_NEIGHBOUR)
-        # The neighbour, not the whole table: the row actually being saved
-        # legitimately changes, because this save path writes '' over a
-        # previously-NULL nullable TextField on origin/main too.
+        # The neighbour, not the whole table: the row the form was open on is
+        # the one this save legitimately writes to, and this example is about
+        # what the *other* row keeps. (It used to have a second reason — the
+        # save also rewrote every previously-NULL nullable TextField to `''` —
+        # which `social.admin.EmptyTextIsNullAdmin` removed.)
         for column in ('date', 'network', 'question', 'topic'):
             with self.subTest(column=column):
                 self.assertEqual(
