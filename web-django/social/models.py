@@ -12,6 +12,7 @@ can never alter or drop anything in `social`.
 """
 
 from django.db import models
+from django.db.models.functions import Now
 
 # Mirrors of the CHECK constraints in schema.sql. Nothing in Django enforces
 # the database constraint; these exist so the admin offers exactly the values
@@ -53,6 +54,34 @@ LEAD_STAGE_CHOICES = [
     ('dead', 'не сложилось'),
 ]
 
+# Mirrors of the four `DEFAULT now()` columns in schema.sql: `people
+# .created_at`, `drafts.created_at`, `leads.created_at` and `leads
+# .updated_at`, each `timestamptz NOT NULL DEFAULT now()`. `inspectdb` cannot
+# see a database-side default, so it emitted a bare `DateTimeField()` for all
+# four — and a `NOT NULL` field with no default is a *required* admin form
+# field whose value Django always sends, so the database default could never
+# fire. That made the ops surface (knowledge scout-3 decision 3) unusable: an
+# operator could not add a person without hand-typing a machine timestamp, and
+# every admin save rewrote `created_at` from the form and left `updated_at`
+# frozen while `bin/lead.mjs` maintains it on both of its write paths.
+#
+# `db_default=Now()` is the exact mirror of `DEFAULT now()` and keeps the stamp
+# database-side, the same choice `social/queue.py` makes for `approved_at`;
+# `editable=False` is what takes the column out of the form so the default can
+# fire. A later save still names `created_at` in its UPDATE, but now with the
+# value loaded from the row rather than one a widget rendered, so a correction
+# preserves it exactly — sub-second digits included. `updated_at` needs an
+# on-*update* clock, which `db_default` has no form of, so it uses
+# `auto_now=True` — that one clock lives in the app (app and database run on
+# the same host, and nothing compares this column across writers). The three
+# columns with no database default — `interactions.ts`, `questions.date`,
+# `ledger.at` — stay operator-supplied and editable.
+#
+# ⚠️ `editable=False` also removes a column from the default *detail*-page
+# fieldsets, and `readonly_fields` alone does not bring it back (a readonly
+# field renders only when `fields`/`fieldsets` also names it). All four values
+# stay in their changelists, which is where the operator scans them.
+
 
 class People(models.Model):
     id = models.TextField(primary_key=True)
@@ -65,7 +94,7 @@ class People(models.Model):
     relevance = models.TextField(blank=True, null=True, verbose_name='релевантность')
     first_seen = models.DateField(blank=True, null=True, verbose_name='впервые замечен')
     status = models.TextField(default='наблюдаем', verbose_name='статус')
-    created_at = models.DateTimeField(verbose_name='создан')
+    created_at = models.DateTimeField(db_default=Now(), editable=False, verbose_name='создан')
 
     class Meta:
         managed = False
@@ -97,7 +126,7 @@ class Drafts(models.Model):
     body = models.TextField(verbose_name='текст')
     facts = models.TextField(blank=True, null=True, verbose_name='факты и источники')
     question = models.TextField(blank=True, null=True, verbose_name='вопрос approver-у')
-    created_at = models.DateTimeField(verbose_name='создан')
+    created_at = models.DateTimeField(db_default=Now(), editable=False, verbose_name='создан')
     approved_at = models.DateTimeField(blank=True, null=True, verbose_name='одобрен')
     sent_at = models.DateTimeField(blank=True, null=True, verbose_name='отправлен')
     sent_url = models.TextField(blank=True, null=True, verbose_name='ссылка на публикацию')
@@ -231,8 +260,8 @@ class Leads(models.Model):
     source_url = models.TextField(blank=True, null=True, verbose_name='где нашли')
     pain = models.TextField(blank=True, null=True, verbose_name='боль, их словами')
     next_step = models.TextField(blank=True, null=True, verbose_name='следующий шаг')
-    created_at = models.DateTimeField(verbose_name='создан')
-    updated_at = models.DateTimeField(verbose_name='обновлён')
+    created_at = models.DateTimeField(db_default=Now(), editable=False, verbose_name='создан')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='обновлён')
 
     class Meta:
         managed = False

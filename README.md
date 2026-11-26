@@ -80,7 +80,13 @@ model is unmanaged, so it issues no DDL and changes no data. What it serves toda
   leads, market questions, the replies to us (`direction = in`) and people. Its changelists
   carry the content the Node screen puts in front of the operator, so each pane is readable
   without opening a detail page. `drafts` is listed there too, but view-only — the queue owns
-  its writes.
+  its writes. The four columns `schema.sql` gives a `DEFAULT now()` — `created_at` on `people`,
+  `drafts` and `leads`, plus `leads.updated_at` — are the database's to fill, so adding a person
+  or a lead needs no hand-typed timestamp, a correction leaves `created_at` exactly as it was,
+  and advancing a lead bumps `updated_at` the way `bin/lead.mjs` does on both of its write
+  paths — which is what makes the just-advanced lead the first row of a changelist ordered by
+  `-updated_at`. All four stay changelist columns, where they are scanned; they are no longer
+  on the detail pages.
 
 **The Node app (`npm run web`, port 4177) remains the primary UI** until the acceptance-parity
 slice of the rebuild is done.
@@ -121,10 +127,12 @@ cd web-django && python -m unittest discover -s tests -t .
 They pin the environment contract and the fail-fast, the loopback-only `ALLOWED_HOSTS`, that
 every model stays unmanaged, that no HTTP client is imported anywhere under `web-django/`, that
 `.env` stays git-ignored with no secrets in tracked files, that `drafts` stays view-only in the
-admin, and the front door: `/` goes to the queue, «Открыть сайт» in the admin goes there too,
-and the queue's tab row goes to the right admin pane. The configuration half of all that needs
-neither a database nor a configured variable. The half that renders pages — the queue's
-transitions, the changelist columns, where a URL actually lands — needs a real Postgres: those
+admin, that the admin's add forms ask for no machine timestamp while the three operator-supplied
+ones stay required, and the front door: `/` goes to the queue, «Открыть сайт» in the admin goes
+there too, and the queue's tab row goes to the right admin pane. The configuration half of all
+that needs neither a database nor a configured variable. The half that renders pages — the
+queue's transitions, the changelist columns, what an admin add or edit does to the timestamps and
+to the leads ordering, where a URL actually lands — needs a real Postgres: those
 checks build and drop a scratch database from `schema.sql`, the way the JS tests do, so set
 `TEST_DATABASE_URL`. Without one they are skipped and say so, and the rest of the suite still
 runs. `npm test` is untouched: `node --test` discovers JS tests only.
