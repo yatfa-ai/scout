@@ -10,8 +10,19 @@ parity reference) puts in front of the operator, so each of its panes is
 readable here without opening a detail page: the reply text and the person's
 name for «Ответы нам», the question and our answer for «Вопросы рынка», the
 headline and the message count for «Люди», the headline and the pain for
-«Лиды». «Ушло» is `LedgerAdmin`, which already matches that pane column for
-column, and «Ждёт тебя» is the approval queue at `/queue/`.
+«Лиды». «Ушло» is `LedgerAdmin` and «Ждёт тебя» is the approval queue at
+`/queue/`.
+
+They also carry that screen's *click-through* (`_link`). The parity reference
+puts six anchors in front of the operator, and five of them belong to tables
+this admin owns: the person's profile in «Люди» and «Лиды», the question's
+source in «Вопросы рынка», the thread a reply sits in for «Ответы нам», and
+the publication in «Ушло». (The sixth, the drafts pane's «куда», is served by
+`/queue/`.) The lead funnel's whole action is "comment on their post, then
+connect with a note", so reaching the post or the profile must not cost a
+detail page — and a changelist renders a `TextField` as text, which is why
+`LedgerAdmin`'s plain `url` column was never clickable and why «Ушло» matched
+that pane in its *values* rather than column for column.
 
 Long text is shown as one truncated line (`_preview`): a changelist cell is a
 scanning surface, and the full value is one click away on the detail page.
@@ -20,6 +31,7 @@ scanning surface, and the full value is one click away on the detail page.
 from django.contrib import admin
 from django.db.models import Count, IntegerField, OuterRef, Subquery
 from django.db.models.functions import Coalesce
+from django.utils.html import format_html
 
 from .models import Drafts, Interactions, Leads, Ledger, People, Questions
 
@@ -57,11 +69,48 @@ def _preview(value, limit=PREVIEW_LIMIT):
     return text[:limit].rstrip() + '…'
 
 
+# The two schemes a changelist cell will put in an `href`. Everything else —
+# `mailto:`, a bare `linkedin.com/in/x`, anything at all — is shown as text.
+LINK_SCHEMES = ('http://', 'https://')
+
+
+def _link(url, label):
+    """`label` as an anchor to `url`, or `url` as plain text if it is not one.
+
+    Shares `_preview`'s convention: None for a missing value, so the admin
+    renders its own empty marker rather than an empty or dead anchor —
+    `people.profile`, `questions.url`, `interactions.post_url` and
+    `ledger.url` are all nullable, and "nothing stored" must not look like
+    "stored and clickable".
+
+    Only `LINK_SCHEMES` becomes an `href`, which is deliberately stricter than
+    the Node screen (it escapes but does not check the scheme). Every column
+    this renders is a free-form `TextField` in `schema.sql`, so the stored
+    value is not trusted to be a URL at all: unchecked, a `javascript:` value
+    would become a live attribute. Anything the check rejects falls through to
+    `_preview`, which is also the honest rendering for a value that is simply
+    not a link. `format_html` does the escaping on top, so a value carrying a
+    quote cannot close the attribute and open a second one.
+
+    `label` is the column's own header, so the header and the link say the
+    same word and the column needs no second vocabulary.
+    """
+    if url is None:
+        return None
+    href = str(url).strip()
+    if not href:
+        return None
+    if not href.lower().startswith(LINK_SCHEMES):
+        return _preview(url)
+    return format_html('<a href="{}" target="_blank" rel="noopener">{}</a>', href, label)
+
+
 @admin.register(People)
 class PeopleAdmin(admin.ModelAdmin):
     list_display = (
         'id',
         'name',
+        'profile_link',
         'network',
         'headline_preview',
         'segment',
@@ -71,7 +120,9 @@ class PeopleAdmin(admin.ModelAdmin):
         'created_at',
     )
     list_filter = ('network', 'status', 'segment')
-    search_fields = ('id', 'name', 'headline', 'relevance')
+    # `profile` is here as well as in the listing: an operator who has the
+    # LinkedIn URL and wants the person behind it had no way to search for it.
+    search_fields = ('id', 'name', 'headline', 'relevance', 'profile')
     ordering = ('-created_at',)
 
     def get_queryset(self, request):
@@ -99,6 +150,16 @@ class PeopleAdmin(admin.ModelAdmin):
                 )
             )
         )
+
+    @admin.display(description='профиль', ordering='profile')
+    def profile_link(self, obj):
+        """«Люди» anchors the person's name to `p.profile`; this is that link.
+
+        A column of its own rather than the name turned into an anchor: the
+        name stays a plain sortable cell, and the value is rendered once.
+        `profile` is this row's own column, so the link costs no query.
+        """
+        return _link(obj.profile, 'профиль')
 
     @admin.display(description='заголовок', ordering='headline')
     def headline_preview(self, obj):
@@ -155,6 +216,7 @@ class InteractionsAdmin(admin.ModelAdmin):
         'direction',
         'kind',
         'person_name',
+        'post_url_link',
         'draft',
         'text_preview',
     )
@@ -199,6 +261,16 @@ class InteractionsAdmin(admin.ModelAdmin):
             return obj.person
         return obj.person_label
 
+    @admin.display(description='ссылка', ordering='post_url')
+    def post_url_link(self, obj):
+        """«Ответы нам» renders «ветка» → `i.post_url`; this is that link.
+
+        The pane's whole purpose is answering a reply, and answering it means
+        opening the thread it sits in. `post_url` is this row's own column, so
+        the link costs no query.
+        """
+        return _link(obj.post_url, 'ссылка')
+
     @admin.display(description='текст', ordering='text')
     def text_preview(self, obj):
         return _preview(obj.text)
@@ -211,7 +283,8 @@ class QuestionsAdmin(admin.ModelAdmin):
         'date',
         'network',
         'question_preview',
-        'asker',
+        'url_link',
+        'asker_or_role',
         'to_us',
         'topic',
         'answer_preview',
@@ -229,6 +302,37 @@ class QuestionsAdmin(admin.ModelAdmin):
     def question_preview(self, obj):
         return _preview(obj.question)
 
+    @admin.display(description='ссылка', ordering='url')
+    def url_link(self, obj):
+        """«Вопросы рынка» anchors the question to `q.url`; this is that link.
+
+        A column of its own rather than the question text turned into an
+        anchor, for the same reason `PeopleAdmin.profile_link` is one: the
+        question stays a plain sortable preview. `url` is this row's own
+        column, so the link costs no query.
+        """
+        return _link(obj.url, 'ссылка')
+
+    @admin.display(description='спросил', ordering='asker')
+    def asker_or_role(self, obj):
+        """The `people` row, falling back to the stored role.
+
+        `questions.asker` is nullable and `asker_role` is free text beside it,
+        which is why the pane renders `q.asker_name || q.asker_role`: a
+        question asked by someone nobody has recorded still says who asked it.
+        The bare `asker` column dropped that role and showed the empty marker
+        instead — `InteractionsAdmin.person_name` has had the same
+        person-else-fallback shape one table over all along, and the
+        asymmetry was the defect.
+
+        A set asker renders exactly what the bare column did (the row's own
+        label), so only the NULL case changes; `list_select_related` loads the
+        person with the question, so neither branch costs a query.
+        """
+        if obj.asker is not None:
+            return obj.asker
+        return _preview(obj.asker_role)
+
     @admin.display(description='наш ответ', ordering='yatfa_answer')
     def answer_preview(self, obj):
         return _preview(obj.yatfa_answer)
@@ -236,10 +340,25 @@ class QuestionsAdmin(admin.ModelAdmin):
 
 @admin.register(Ledger)
 class LedgerAdmin(admin.ModelAdmin):
-    list_display = ('id', 'at', 'network', 'topic', 'url', 'outcome')
+    # `url_link` *replaces* the plain `url` column rather than sitting beside
+    # it: «Ушло» anchors the topic to `l.url`, and `Ledger.url` is a
+    # `TextField`, so the column rendered the address as escaped text. The
+    # accepted consequence is that the raw URL is no longer copyable out of a
+    # changelist cell; it stays searchable below and on the detail page.
+    list_display = ('id', 'at', 'network', 'topic', 'url_link', 'outcome')
     list_filter = ('network', 'outcome')
     search_fields = ('topic', 'url', 'outcome')
     ordering = ('-at',)
+
+    @admin.display(description='ссылка', ordering='url')
+    def url_link(self, obj):
+        """The publication itself: «Ушло» anchors `l.topic` to `l.url`.
+
+        `topic` is its own sortable column here, so the anchor is this cell
+        rather than that one. `url` is this row's own column, so the link
+        costs no query.
+        """
+        return _link(obj.url, 'ссылка')
 
 
 @admin.register(Leads)
@@ -247,6 +366,7 @@ class LeadsAdmin(admin.ModelAdmin):
     list_display = (
         'id',
         'person',
+        'person_profile_link',
         'stage',
         'person_headline',
         'pain_preview',
@@ -263,6 +383,23 @@ class LeadsAdmin(admin.ModelAdmin):
     # annotated ordering here would override the operator's own column clicks.
     # Stage is a filter and every column is sortable instead.
     ordering = ('-updated_at',)
+
+    @admin.display(description='профиль', ordering='person__profile')
+    def person_profile_link(self, obj):
+        """«Лиды» renders a «профиль» anchor → `l.profile`; this is that link.
+
+        The funnel's own action is "comment on their post, then connect with a
+        note", and from this changelist the profile was three pages and a
+        copied text field away (lead detail, where the person widget shows a
+        name and no URL, then the people changelist, then the person's own
+        detail page). The profile comes off the related `people` row, which
+        `list_select_related` already loads with the lead, so the link rides
+        what is loaded rather than adding a fetch.
+
+        The lead's own `source_url` («где нашли») gets no anchor: the pane
+        anchors the person's profile and nothing else.
+        """
+        return _link(obj.person.profile, 'профиль')
 
     @admin.display(description='заголовок', ordering='person__headline')
     def person_headline(self, obj):
