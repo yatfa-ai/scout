@@ -91,7 +91,13 @@ costs no extra query.
   <div class="meta">
     <span class="tag">{{ draft.get_network_display }}</span>
     <span class="tag">{{ draft.get_kind_display }}</span>
-    {% if draft.target_url %}<a href="{{ draft.target_url }}" target="_blank" rel="noopener">куда</a>{% endif %}
+    {% comment %} «куда» is an anchor only when `target_href` is set — the view
+    puts the scheme-checked value there (`social/links.py`). A `target_url`
+    the check rejects is prose, not an address, so it reads as itself: in
+    full, unlike the admin's truncated cell, because the card is a reading
+    surface and `(ссылку достану при отправке)` is information the approver
+    wants intact. `.tag` is the same span the two labels above use. {% endcomment %}
+    {% if draft.target_href %}<a href="{{ draft.target_href }}" target="_blank" rel="noopener">куда</a>{% elif draft.target_url %}<span class="tag">{{ draft.target_url }}</span>{% endif %}
     {% if draft.status == 'approved' %}<span class="stamp">утверждено {{ draft.approved_at|date:"d.m H:i" }} — агент отправит</span>{% endif %}
   </div>
   {% if draft.target_note %}<div class="note">{{ draft.target_note }}</div>{% endif %}

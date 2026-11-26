@@ -33,6 +33,7 @@ from django.db.models import Count, IntegerField, OuterRef, Subquery
 from django.db.models.functions import Coalesce
 from django.utils.html import format_html
 
+from .links import web_href
 from .models import Drafts, Interactions, Leads, Ledger, People, Questions
 
 admin.site.site_header = 'Yatfa Scout — админка'
@@ -69,11 +70,6 @@ def _preview(value, limit=PREVIEW_LIMIT):
     return text[:limit].rstrip() + '…'
 
 
-# The two schemes a changelist cell will put in an `href`. Everything else —
-# `mailto:`, a bare `linkedin.com/in/x`, anything at all — is shown as text.
-LINK_SCHEMES = ('http://', 'https://')
-
-
 def _link(url, label):
     """`label` as an anchor to `url`, or `url` as plain text if it is not one.
 
@@ -83,26 +79,29 @@ def _link(url, label):
     `ledger.url` are all nullable, and "nothing stored" must not look like
     "stored and clickable".
 
-    Only `LINK_SCHEMES` becomes an `href`, which is deliberately stricter than
-    the Node screen (it escapes but does not check the scheme). Every column
-    this renders is a free-form `TextField` in `schema.sql`, so the stored
-    value is not trusted to be a URL at all: unchecked, a `javascript:` value
-    would become a live attribute. Anything the check rejects falls through to
-    `_preview`, which is also the honest rendering for a value that is simply
-    not a link. `format_html` does the escaping on top, so a value carrying a
-    quote cannot close the attribute and open a second one.
+    Which values may become an `href` is `links.web_href`'s decision, not this
+    module's: the queue card's «куда» asks the same question about the same
+    kind of free-form column, and the rule answering it twice is how the two
+    surfaces drifted apart in the first place. That module's docstring carries
+    the reason the check exists at all.
+
+    What to render instead is this surface's own decision: anything
+    `web_href` rejects falls through to `_preview`, which is the honest
+    rendering for a value that is simply not a link, and keeps a long one from
+    widening the scanning column. `format_html` does the escaping on top, so a
+    value carrying a quote cannot close the attribute and open a second one.
 
     `label` is the column's own header, so the header and the link say the
     same word and the column needs no second vocabulary.
     """
     if url is None:
         return None
-    href = str(url).strip()
-    if not href:
-        return None
-    if not href.lower().startswith(LINK_SCHEMES):
-        return _preview(url)
-    return format_html('<a href="{}" target="_blank" rel="noopener">{}</a>', href, label)
+    href = web_href(url)
+    if href is not None:
+        return format_html('<a href="{}" target="_blank" rel="noopener">{}</a>', href, label)
+    # `_preview` of a whitespace-only value is the empty string, which would
+    # render as a blank cell; the empty marker is the honest cell there.
+    return _preview(url) or None
 
 
 @admin.register(People)

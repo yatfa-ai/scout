@@ -27,6 +27,12 @@ A refused transition must be visible: `queue.NO_CHANGE` — `server.mjs`'s own
 sentence — goes into `django.contrib.messages`, and `queue.html` renders the
 messages block. A silent refusal would leave the operator pressing a button
 that does nothing.
+
+One deliberate deviation from the parity reference: the card's «куда» anchor is
+minted only from a `target_url` that `links.web_href` accepts as one, and the
+rejected value is shown as text instead. `web/index.html` escapes that column
+but does not check its scheme, and three of the eleven drafts in the project's
+own backup store prose there; `links.py` carries the rest of the reason.
 """
 
 from django.contrib import messages
@@ -35,6 +41,7 @@ from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
 from . import queue
+from .links import web_href
 from .models import Drafts
 
 
@@ -69,6 +76,12 @@ def queue_page(request):
     `status in ('waiting','approved') order by d.id` query in `server.mjs`.
     """
     drafts = list(Drafts.objects.filter(status__in=queue.OPEN_STATUSES).order_by('id'))
+    for draft in drafts:
+        # The card's «куда» anchor, or None when the stored value must not
+        # become one — `links.web_href` carries the reason. Computed here
+        # because a Django template cannot call a function with an argument,
+        # and set on the already-materialised row, so it costs no query.
+        draft.target_href = web_href(draft.target_url)
     return render(
         request,
         'social/queue.html',
