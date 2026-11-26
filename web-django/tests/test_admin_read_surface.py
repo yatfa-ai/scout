@@ -8,14 +8,25 @@ and the pain for «Лиды». Without those columns an operator who drops the N
 reader opens one detail page per row to read a single reply, so the columns are
 the deliverable and these examples are what pins them.
 
+Reading a row is half of it. The parity reference also puts six anchors in
+front of the operator, five of them on tables this admin owns — the person's
+profile in «Люди» and «Лиды», the question's source in «Вопросы рынка», the
+thread for «Ответы нам», the publication in «Ушло» — and `ClickThroughTest`
+is what pins those. (The sixth, the drafts pane's «куда», is served by
+`/queue/`.) `LedgerPaneTest` carried the claim that «Ушло» "already matched
+the ledger pane column for column"; it matched the four *values*, and the
+pane's topic is a link while a `TextField` column renders as text, so that
+claim is corrected here rather than inherited.
+
 Two halves, for two kinds of claim:
 
-  1. metadata, no database — the six `list_display` sets (the four this slice
-     changes, plus `Ledger` and `Drafts`, which must not change), `direction`
-     first in the interactions filter, and a Russian header plus an ordering
-     field on every new column. Read out of `admin.site._registry` in a probe
-     subprocess, the precedent of `tests/test_drafts_admin_view_only.py`;
-     `django.setup()` needs no Postgres.
+  1. metadata, no database — the six `list_display` sets (the five this slice
+     and its predecessor change, plus `Drafts`, which must not change),
+     `direction` first in the interactions filter, and a Russian header plus
+     an ordering field on every new column. Read out of
+     `admin.site._registry` in a probe subprocess, the precedent of
+     `tests/test_drafts_admin_view_only.py`; `django.setup()` needs no
+     Postgres.
   2. rendered pages, against a scratch database built from `schema.sql` by
      `tests/_db.py` — because "the reply is readable" is a claim about a cell
      of a rendered changelist, not about a configuration tuple. With no
@@ -28,18 +39,39 @@ text sits in no visible column — the exact false pass this module exists to
 rule out. Those examples therefore go through `rows_of()`, and the row width is
 checked against `list_display` so a broken extractor cannot pass either.
 
+⚠️ Every claim about an ANCHOR is asserted on the extracted `href`, never on
+cell text — `rows_of()` strips exactly the attribute the claim is about — so
+`ClickThroughTest` reads cell MARKUP through its own probe. Both of its
+helpers check the row width first, because a cell is addressed by its
+`list_display` index plus the action-checkbox offset: against an admin that is
+missing the column, those offsets shift by one and an unchecked read silently
+asserts on a *neighbouring* cell, which is how a marker claim can pass without
+the column existing at all. The width check alone is not enough on «Ушло»,
+where the link column *replaced* a text column and the row is therefore just
+as wide as before, so the marker example reads the same column's live link
+first as its own positive control.
+
 `NoQueryPerRowTest` sits in that second half, but its claim is about COST
 rather than content: a changelist must not grow a query with its page. It
-covers all five changelists that resolve something per row — the two annotated
-values (the interaction's resolved person name, the person's message count)
-and the four `list_select_related` foreign-key columns (`interactions.draft`,
-`leads.person`, `questions.asker`, `drafts.target_person`) — and
-`_add_bulk_rows` populates each of those foreign keys, because a page of rows
-with a null one measures nothing (see the warning on that helper).
+covers all six changelists this admin owns — the five that resolve something
+per row, through the two annotated values (the interaction's resolved person
+name, the person's message count) and the four `list_select_related`
+foreign-key columns (`interactions.draft`, `leads.person`, `questions.asker`,
+`drafts.target_person`), plus `ledger`, whose only changed column is the
+replacement anchor — and `_add_bulk_rows` populates each of those foreign keys,
+because a page of rows with a null one measures nothing (see the warning on
+that helper). All five link columns are measured: four read their own row's
+column and the fifth (`leads.person_profile_link`) reads the `people` row
+`list_select_related` already loads, so no anchor may add a fetch. The ledger
+is in `MODELS` for that reason and its bulk rows each store a `url`, so
+`url_link` is measured at volume on a page of rendered anchors — the one
+changelist whose column set changed by replacement rather than addition is not
+the one left unguarded.
 """
 
 import json
 import os
+import re
 import unittest
 
 from . import _db
@@ -55,34 +87,56 @@ OPERATOR = 'admin-read-tests-operator'
 # membership: losing a column is as much a regression as never adding one.
 LIST_DISPLAY = {
     'Interactions': [
-        'id', 'ts', 'network', 'direction', 'kind', 'person_name', 'draft', 'text_preview',
+        'id', 'ts', 'network', 'direction', 'kind', 'person_name', 'post_url_link',
+        'draft', 'text_preview',
     ],
     'Questions': [
-        'id', 'date', 'network', 'question_preview', 'asker', 'to_us', 'topic',
-        'answer_preview', 'status',
+        'id', 'date', 'network', 'question_preview', 'url_link', 'asker_or_role', 'to_us',
+        'topic', 'answer_preview', 'status',
     ],
     'People': [
-        'id', 'name', 'network', 'headline_preview', 'segment', 'status',
+        'id', 'name', 'profile_link', 'network', 'headline_preview', 'segment', 'status',
         'interaction_count', 'first_seen', 'created_at',
     ],
     'Leads': [
-        'id', 'person', 'stage', 'person_headline', 'pain_preview', 'next_step',
-        'created_at', 'updated_at',
+        'id', 'person', 'person_profile_link', 'stage', 'person_headline', 'pain_preview',
+        'next_step', 'created_at', 'updated_at',
     ],
-    # «Ушло» already matched the ledger pane column for column: unchanged.
-    'Ledger': ['id', 'at', 'network', 'topic', 'url', 'outcome'],
+    # «Ушло»'s own anchor: `url_link` REPLACES the plain `url` column it used
+    # to carry, so the address the pane makes clickable is clickable here too.
+    'Ledger': ['id', 'at', 'network', 'topic', 'url_link', 'outcome'],
     # Slice 1's listing, kept view-only by slice 2: unchanged.
     'Drafts': [
         'id', 'network', 'kind', 'status', 'target_person', 'created_at', 'sent_at',
     ],
 }
 
-# The columns this slice adds, per model, with the field each one must sort by.
+# Every column these two slices add, per model, with the field each one must
+# sort by: the content previews and the resolved values first, then the five
+# anchors and the «спросил» fallback.
 NEW_COLUMNS = {
-    'Interactions': {'person_name': 'person_label', 'text_preview': 'text'},
-    'Questions': {'question_preview': 'question', 'answer_preview': 'yatfa_answer'},
-    'People': {'headline_preview': 'headline', 'interaction_count': 'interaction_total'},
-    'Leads': {'person_headline': 'person__headline', 'pain_preview': 'pain'},
+    'Interactions': {
+        'person_name': 'person_label',
+        'text_preview': 'text',
+        'post_url_link': 'post_url',
+    },
+    'Questions': {
+        'question_preview': 'question',
+        'answer_preview': 'yatfa_answer',
+        'url_link': 'url',
+        'asker_or_role': 'asker',
+    },
+    'People': {
+        'headline_preview': 'headline',
+        'interaction_count': 'interaction_total',
+        'profile_link': 'profile',
+    },
+    'Leads': {
+        'person_headline': 'person__headline',
+        'pain_preview': 'pain',
+        'person_profile_link': 'person__profile',
+    },
+    'Ledger': {'url_link': 'url'},
 }
 
 MODEL_URLS = {
@@ -106,13 +160,46 @@ CYRILLIC = set('абвгдеёжзийклмнопрстуфхцчшщъыьэю
 # --- fixture ---------------------------------------------------------------
 
 PEOPLE = [
-    # id, name, network, headline
-    ('li:anna', 'Анна Петрова', 'linkedin', 'CTO в среднем продукте — живёт в согласованиях'),
-    ('li:boris', 'Борис Смирнов', 'linkedin', 'инженер данных, пишет про пайплайны'),
-    # No headline and no interaction: the "nothing stored" and the zero.
-    ('x:vera', 'Вера Кузнецова', 'x', None),
+    # id, name, network, headline, profile
+    (
+        'li:anna',
+        'Анна Петрова',
+        'linkedin',
+        'CTO в среднем продукте — живёт в согласованиях',
+        # The one term in the fixture that appears only in a profile, so
+        # searching for it proves the profile itself is searchable.
+        'https://example.test/profile/anna-petrova',
+    ),
+    (
+        'li:boris',
+        'Борис Смирнов',
+        'linkedin',
+        'инженер данных, пишет про пайплайны',
+        # A real profile, stored the way a person types one. `people.profile`
+        # is free-text, so this is not a URL and must not become an `href`.
+        'linkedin.com/in/boris',
+    ),
+    # No headline, no profile and no interaction: the "nothing stored" cells
+    # and the zero.
+    ('x:vera', 'Вера Кузнецова', 'x', None, None),
+    # The two values the scheme check and the escaping exist for. Nothing
+    # stops an operator pasting either into a free-text column.
+    ('li:script', 'Сергей Скриптов', 'linkedin', None, 'javascript:alert(1)'),
+    (
+        'li:quoted',
+        'Кирилл Кавычкин',
+        'linkedin',
+        None,
+        'https://example.test/q"onmouseover="alert(1)',
+    ),
 ]
 ANNA_HEADLINE = PEOPLE[0][3]
+ANNA_PROFILE = PEOPLE[0][4]
+# The term that is in Anna's profile and in no other column of any row.
+PROFILE_ONLY_TERM = 'anna-petrova'
+NO_SCHEME_PROFILE = PEOPLE[1][4]
+SCRIPT_PROFILE = PEOPLE[3][4]
+QUOTED_PROFILE = PEOPLE[4][4]
 
 # An id that is in no `people` row. Real in this data: `interactions.person` is
 # free-form text with no foreign key, so the name must fall back to the id.
@@ -126,13 +213,19 @@ LONG_REPLY = (
 OUT_TEXT = 'наш комментарий под их постом'
 BORIS_TEXT = 'коротко: интересно, расскажи подробнее'
 
+# «Ответы нам» renders «ветка» → `i.post_url`: the thread the reply sits in,
+# which is where answering it happens.
+THREAD_URL = 'https://example.test/thread/anna'
+
 INTERACTIONS = [
-    # id, direction, kind, person, text
-    ('i-anna-in', 'in', 'reply', 'li:anna', REPLY_TEXT),
-    ('i-ghost-in', 'in', 'comment', GHOST, 'пишет кто-то, кого мы ещё не записали'),
-    ('i-anon-in', 'in', 'reply', None, LONG_REPLY),
-    ('i-anna-out', 'out', 'comment', 'li:anna', OUT_TEXT),
-    ('i-boris-in', 'in', 'reply', 'li:boris', BORIS_TEXT),
+    # id, direction, kind, person, text, post_url
+    ('i-anna-in', 'in', 'reply', 'li:anna', REPLY_TEXT, THREAD_URL),
+    ('i-ghost-in', 'in', 'comment', GHOST, 'пишет кто-то, кого мы ещё не записали',
+     'https://example.test/thread/ghost'),
+    # No person and no thread: the two empty markers on one row.
+    ('i-anon-in', 'in', 'reply', None, LONG_REPLY, None),
+    ('i-anna-out', 'out', 'comment', 'li:anna', OUT_TEXT, 'https://example.test/thread/ours'),
+    ('i-boris-in', 'in', 'reply', 'li:boris', BORIS_TEXT, None),
 ]
 # Expected message count per person: `select count(*) ... where person = id`.
 EXPECTED_COUNTS = {'li:anna': 2, 'li:boris': 1, 'x:vera': 0}
@@ -142,15 +235,27 @@ ANSWER_TEXT = 'Есть ledger и очередь утверждений — сч
 UNANSWERED_QUESTION = 'Кто отвечает, когда агент ошибается?'
 
 ANONYMOUS_QUESTION = 'А кто это вообще спросил — мы не записали.'
+# `questions.asker_role` is the free text the pane falls back to with
+# `q.asker_name || q.asker_role`.
+ANONYMOUS_ASKER_ROLE = 'основатель стартапа'
+UNATTRIBUTED_QUESTION = 'И этот — без человека и без роли.'
+
+# «Вопросы рынка» anchors the question itself to `q.url`.
+QUESTION_URL = 'https://example.test/question/roi'
 
 QUESTIONS = [
-    # id, asker, to_us, question, answer, topic
-    ('q-roi', 'li:anna', True, QUESTION_TEXT, ANSWER_TEXT, 'ROI'),
-    ('q-blame', 'li:boris', False, UNANSWERED_QUESTION, None, 'ответственность'),
-    # No asker: `questions.asker` is nullable, so loading the person with the
-    # question must keep the join a LEFT OUTER one and this row must still be
-    # on the page, with the admin's own empty marker in the column.
-    ('q-anon', None, False, ANONYMOUS_QUESTION, None, 'без автора'),
+    # id, asker, asker_role, to_us, question, answer, topic, url
+    ('q-roi', 'li:anna', None, True, QUESTION_TEXT, ANSWER_TEXT, 'ROI', QUESTION_URL),
+    ('q-blame', 'li:boris', None, False, UNANSWERED_QUESTION, None, 'ответственность',
+     'https://example.test/question/blame'),
+    # No asker, but a role: `questions.asker` is nullable, so loading the
+    # person with the question must keep the join a LEFT OUTER one and this
+    # row must still be on the page — with the role in «спросил», which is
+    # what the Node pane shows, and no link in «ссылка».
+    ('q-anon', None, ANONYMOUS_ASKER_ROLE, False, ANONYMOUS_QUESTION, None, 'без автора', None),
+    # Neither: nothing is stored about who asked, so the column has nothing to
+    # fall back to and the admin's own marker is the honest cell.
+    ('q-void', None, None, False, UNATTRIBUTED_QUESTION, None, 'без автора и роли', None),
 ]
 
 PAIN_TEXT = 'каждое согласование — это переписка на три дня'
@@ -169,10 +274,13 @@ DRAFT_BODY = 'черновик для проверки, что drafts остал
 TARGETED_DRAFT_BODY = 'черновик с адресатом: ячейка показывает человека, а не его id'
 TARGETED_DRAFT_PERSON = 'li:anna'
 
-# «Ушло» renders ledger rows, and `LedgerAdmin` already matched that pane
-# column for column before this slice: one row, so the listing has something
-# to render and the parity claim is checked rather than assumed.
+# «Ушло» renders ledger rows, and it anchors each row's topic to `l.url`:
+# `LedgerAdmin` matched that pane's four *values* before this slice, with the
+# address itself as escaped text. Two rows, so both the anchor and the missing
+# link are rendered rather than assumed.
 LEDGER = ('2026-11-19 12:00', 'linkedin', 'очередь утверждений', 'отклик: три комментария')
+LEDGER_URL = 'https://example.test/post'
+LEDGER_NO_URL = ('2026-11-18 09:00', 'x', 'тред без ссылки', 'тишина')
 
 # How many rows the volume example adds per table: enough to fill the
 # changelist page, so a per-row query would be unmissable.
@@ -283,6 +391,27 @@ RENDER_CHANGELIST = HTTP_PRELUDE + """
 print(json.dumps(changelist(os.environ['PROBE_MODEL'], os.environ.get('PROBE_QUERY', ''))))
 """
 
+# A click-through claim is a claim about an `href`, and `rows_of()` strips
+# exactly that attribute away, so this returns each row's cells as MARKUP.
+# The stripped cells ride along so a row can still be found by its id, and
+# the width control in `ClickThroughTest.markup_page` reads both.
+RENDER_CELL_MARKUP = HTTP_PRELUDE + """
+client = operator_client()
+response = client.get(changelist_url(os.environ['PROBE_MODEL']))
+body = response.content.decode('utf-8')
+table = body.split('<tbody>')[1].split('</tbody>')[0] if '<tbody>' in body else ''
+print(json.dumps({
+    'status': response.status_code,
+    'rows': [
+        {'text': [text_of(cell) for cell in CELL.findall(row)], 'markup': CELL.findall(row)}
+        for row in ROW.findall(table)
+    ],
+    # The page as a whole, for the claim that a rejected scheme reaches no
+    # `href` anywhere on it rather than merely not reaching its own cell.
+    'html': body,
+}))
+"""
+
 # One warm-up request, then the measured one: the session and user lookups are
 # the same in both volumes, so what is left to vary is the row count.
 QUERY_COUNT = HTTP_PRELUDE + """
@@ -374,11 +503,11 @@ def tearDownModule():
 
 def _seed():
     global draft_id, targeted_draft_id
-    for person_id, name, network, headline in PEOPLE:
+    for person_id, name, network, headline, profile in PEOPLE:
         database.sql(
             """insert into people (id, name, network, profile, headline, segment, first_seen)
                values (%s, %s, %s, %s, %s, 'founder', '2026-11-01')""",
-            (person_id, name, network, f'https://example.test/{person_id}', headline),
+            (person_id, name, network, profile, headline),
         )
     draft_id = database.sql(
         """insert into drafts (network, kind, status, body) values
@@ -390,20 +519,21 @@ def _seed():
            ('linkedin', 'comment', 'waiting', %s, %s) returning id""",
         (TARGETED_DRAFT_PERSON, TARGETED_DRAFT_BODY),
     )[0]['id']
-    for interaction_id, direction, kind, person, text in INTERACTIONS:
+    for interaction_id, direction, kind, person, text, post_url in INTERACTIONS:
         database.sql(
-            """insert into interactions (id, ts, network, direction, kind, person, text, draft_id)
-               values (%s, '2026-11-20 10:00', 'linkedin', %s, %s, %s, %s, %s)""",
-            (interaction_id, direction, kind, person, text,
+            """insert into interactions (id, ts, network, direction, kind, person, post_url,
+                                         text, draft_id)
+               values (%s, '2026-11-20 10:00', 'linkedin', %s, %s, %s, %s, %s, %s)""",
+            (interaction_id, direction, kind, person, post_url, text,
              draft_id if direction == 'out' else None),
         )
-    for question_id, asker, to_us, question, answer, topic in QUESTIONS:
+    for question_id, asker, asker_role, to_us, question, answer, topic, url in QUESTIONS:
         database.sql(
-            """insert into questions (id, date, network, asker, to_us, question, context,
-                                      yatfa_answer, topic, status)
-               values (%s, '2026-11-20', 'linkedin', %s, %s, %s, 'контекст вопроса', %s, %s,
-                       'открыт')""",
-            (question_id, asker, to_us, question, answer, topic),
+            """insert into questions (id, date, network, asker, asker_role, to_us, question,
+                                      context, yatfa_answer, topic, url, status)
+               values (%s, '2026-11-20', 'linkedin', %s, %s, %s, %s, 'контекст вопроса', %s,
+                       %s, %s, 'открыт')""",
+            (question_id, asker, asker_role, to_us, question, answer, topic, url),
         )
     for person, stage, pain, next_step in LEADS:
         database.sql(
@@ -412,13 +542,19 @@ def _seed():
         )
     database.sql(
         """insert into ledger (at, network, topic, url, outcome)
-           values (%s, %s, %s, 'https://example.test/post', %s)""",
-        (LEDGER[0], LEDGER[1], LEDGER[2], LEDGER[3]),
+           values (%s, %s, %s, %s, %s)""",
+        (LEDGER[0], LEDGER[1], LEDGER[2], LEDGER_URL, LEDGER[3]),
+    )
+    database.sql(
+        """insert into ledger (at, network, topic, url, outcome)
+           values (%s, %s, %s, NULL, %s)""",
+        LEDGER_NO_URL,
     )
 
 
 def _add_bulk_rows(volume):
-    """`volume` more people, each with one interaction, lead, question and draft.
+    """`volume` more people, each with one interaction, lead, question and
+    draft, plus `volume` ledger rows (which hang off no person).
 
     ⚠️ Every bulk row POPULATES the foreign key its changelist displays — each
     question's `asker` and each draft's `target_person` name that row's own
@@ -465,6 +601,18 @@ def _add_bulk_rows(volume):
            from generate_series(1, %s) g""",
         (BULK_PREFIX, volume),
     )
+    # `ledger.id` is a `bigserial` too and the table carries no foreign key at
+    # all, so these rows are keyed by a `topic` prefix. Every one of them
+    # stores a `url`, so the page `LedgerAdmin.url_link` is measured on is a
+    # page of rendered anchors rather than of empty markers; and they are dated
+    # after the fixture rows so `-at` puts them on the measured page.
+    database.sql(
+        """insert into ledger (at, network, topic, url, outcome)
+           select '2026-11-21 10:00', 'linkedin', %s || ': массовая тема ' || g,
+                  'https://example.test/post/' || g, 'отклик'
+           from generate_series(1, %s) g""",
+        (BULK_PREFIX, volume),
+    )
 
 
 def _remove_bulk_rows():
@@ -478,6 +626,10 @@ def _remove_bulk_rows():
     database.sql('delete from leads where person like %s', (f'{BULK_PREFIX}:%',))
     database.sql('delete from interactions where person like %s', (f'{BULK_PREFIX}:%',))
     database.sql('delete from people where id like %s', (f'{BULK_PREFIX}:%',))
+    # The ledger rows name no person, so this one is unordered with respect to
+    # the rest — it has to happen all the same, because 120 rows dated after
+    # the fixture would otherwise displace «Ушло»'s own rows off page 1.
+    database.sql('delete from ledger where topic like %s', (f'{BULK_PREFIX}:%',))
 
 
 # --- the metadata half -----------------------------------------------------
@@ -671,17 +823,37 @@ class QuestionsPaneTest(ChangelistTestCase):
             'nothing stored must not look like a stored empty answer',
         )
 
-    def test_the_asker_is_the_person_and_a_question_with_no_asker_shows_the_marker(self):
+    def test_the_asker_is_the_person_who_asked(self):
         # Loading the person with the question moves no content: the column
-        # still renders the person's own label, and a null `asker` still puts
-        # its row on the page (a LEFT OUTER join, not an INNER one).
+        # still renders the person's own label.
         asked = self.row_with(self.page, 'Questions', 'id', 'q-roi')
-        self.assertEqual(self.cell('Questions', asked, 'asker'), 'Анна Петрова (linkedin)')
+        self.assertEqual(self.cell('Questions', asked, 'asker_or_role'), 'Анна Петрова (linkedin)')
+
+    def test_a_question_with_no_asker_falls_back_to_the_stored_role(self):
+        # `q.asker_name || q.asker_role` on the Node pane: a question asked by
+        # someone nobody has recorded still says who asked it. A null `asker`
+        # must also keep its row on the page (a LEFT OUTER join, not an INNER
+        # one), which is what reading the other column here checks.
         anonymous = self.row_with(self.page, 'Questions', 'id', 'q-anon')
         self.assertEqual(
             self.cell('Questions', anonymous, 'question_preview'), ANONYMOUS_QUESTION
         )
-        self.assertEqual(self.cell('Questions', anonymous, 'asker'), '-')
+        self.assertEqual(
+            self.cell('Questions', anonymous, 'asker_or_role'),
+            ANONYMOUS_ASKER_ROLE,
+            'the role is what the pane falls back to, not the empty marker',
+        )
+
+    def test_a_question_with_neither_asker_nor_role_shows_the_admin_empty_marker(self):
+        unattributed = self.row_with(self.page, 'Questions', 'id', 'q-void')
+        self.assertEqual(
+            self.cell('Questions', unattributed, 'question_preview'), UNATTRIBUTED_QUESTION
+        )
+        self.assertEqual(
+            self.cell('Questions', unattributed, 'asker_or_role'),
+            '-',
+            'with nothing stored about who asked, the marker is the honest cell',
+        )
 
 
 class PeoplePaneTest(ChangelistTestCase):
@@ -721,6 +893,17 @@ class PeoplePaneTest(ChangelistTestCase):
             'no messages is a zero, not an empty cell',
         )
 
+    def test_a_person_is_findable_by_their_profile_url(self):
+        # The profile was in no column and in no `search_fields`: an operator
+        # holding the LinkedIn URL and wanting the person behind it could
+        # reach them by neither route.
+        found = self.changelist('People', f'?q={PROFILE_ONLY_TERM}')
+        self.assertEqual(
+            [self.cell('People', row, 'id') for row in found['rows']],
+            ['li:anna'],
+            f'{PROFILE_ONLY_TERM!r} is in Anna\'s profile and in no other column',
+        )
+
 
 class LeadsPaneTest(ChangelistTestCase):
     """«Лиды»: who they are and the pain in their own words."""
@@ -741,7 +924,7 @@ class LeadsPaneTest(ChangelistTestCase):
 
 
 class LedgerPaneTest(ChangelistTestCase):
-    """«Ушло» was already covered: the ledger listing is untouched."""
+    """«Ушло»: the pane's four values, beside the topic's link in `url_link`."""
 
     def test_the_ledger_changelist_still_shows_the_four_columns_the_pane_shows(self):
         page = self.changelist('Ledger')
@@ -768,6 +951,174 @@ class DraftsPaneTest(ChangelistTestCase):
         self.assertEqual(self.cell('Drafts', unaddressed, 'target_person'), '-')
 
 
+# The five anchors the Node screen puts in front of the operator, for the
+# tables this admin owns: the model, the column that carries the link, the row
+# to read it from (a column and the value that identifies that row), and the
+# URL the anchor must open. The parity reference's sixth `href` is the drafts
+# pane's «куда», which `/queue/` already serves.
+ANCHORS = [
+    ('People', 'profile_link', ('id', 'li:anna'), ANNA_PROFILE),
+    ('Leads', 'person_profile_link', ('person', 'Анна Петрова (linkedin)'), ANNA_PROFILE),
+    ('Questions', 'url_link', ('id', 'q-roi'), QUESTION_URL),
+    ('Interactions', 'post_url_link', ('id', 'i-anna-in'), THREAD_URL),
+    ('Ledger', 'url_link', ('at', LEDGER[0]), LEDGER_URL),
+]
+
+# The same five columns, on a row with nothing stored in them.
+MISSING_URL_ROWS = [
+    ('People', 'profile_link', ('id', 'x:vera')),
+    ('Leads', 'person_profile_link', ('person', 'Вера Кузнецова (x)')),
+    ('Questions', 'url_link', ('id', 'q-anon')),
+    ('Interactions', 'post_url_link', ('id', 'i-anon-in')),
+    ('Ledger', 'url_link', ('at', LEDGER_NO_URL[0])),
+]
+
+# Which row of `ANCHORS` carries each column's live link, so a marker claim
+# can check the column renders one at all before reading its empty case.
+ANCHOR_ROW = {(model, column): locator for model, column, locator, _url in ANCHORS}
+
+
+class ClickThroughTest(ChangelistTestCase):
+    """What the operator can click: the anchor half of every pane.
+
+    The funnel's action is "comment on their post, then connect with a note",
+    so the profile and the post are what a row has to reach. Before these
+    columns the only `href` in a changelist row was the admin's own change
+    link, and the operator's route to a LinkedIn profile was four pages and a
+    copied text field.
+
+    Each anchor claim is asserted on the extracted `href`: cell text cannot
+    carry one, and `rows_of()` strips it. Each marker or plain-text claim goes
+    through `cell()` instead — see the warning in the module docstring.
+    """
+
+    # One render per model, shared by the examples below: the fixture is
+    # static here and every claim is a read.
+    _markup = {}
+    _rendered = {}
+
+    def markup_page(self, model):
+        """`model`'s changelist with each row's cells as markup and as text."""
+        if model not in self._markup:
+            page = self.probe(RENDER_CELL_MARKUP, PROBE_MODEL=MODEL_URLS[model])
+            self.assertEqual(page['status'], 200)
+            self.assertTrue(page['rows'], f'the {model} changelist rendered no row')
+            # The width control `changelist()` applies, for the same reason: a
+            # cell is addressed by its `list_display` index plus the action
+            # checkbox, so a changelist one cell narrower than the pin reads a
+            # neighbouring column and an unchecked claim passes vacuously.
+            expected = len(LIST_DISPLAY[model]) + ACTION_CHECKBOX[model]
+            for row in page['rows']:
+                self.assertEqual(
+                    len(row['markup']),
+                    expected,
+                    f'{model} row has {len(row["markup"])} cells, expected {expected}',
+                )
+            self._markup[model] = page
+        return self._markup[model]
+
+    def offset_of(self, model, column):
+        return LIST_DISPLAY[model].index(column) + ACTION_CHECKBOX[model]
+
+    def markup_of(self, model, column, locator):
+        """The MARKUP of one row's `column` cell, the row found by `locator`."""
+        by_column, value = locator
+        rows = self.markup_page(model)['rows']
+        matches = [r for r in rows if r['text'][self.offset_of(model, by_column)] == value]
+        self.assertEqual(
+            len(matches),
+            1,
+            f'expected exactly one {model} row with {by_column} == {value!r}',
+        )
+        return matches[0]['markup'][self.offset_of(model, column)]
+
+    def text_row(self, model, column, value):
+        """One row of the rendered changelist, via the width-controlled helper."""
+        if model not in self._rendered:
+            self._rendered[model] = self.changelist(model)
+        return self.row_with(self._rendered[model], model, column, value)
+
+    def hrefs_in(self, markup):
+        return re.findall(r'href="([^"]*)"', markup)
+
+    def test_every_pane_offers_its_anchor_as_a_link_in_the_row(self):
+        for model, column, locator, url in ANCHORS:
+            with self.subTest(model=model, column=column):
+                self.assertEqual(
+                    self.hrefs_in(self.markup_of(model, column, locator)),
+                    [url],
+                    f'{model}.{column} must open {url} from the changelist row',
+                )
+
+    def test_each_anchor_opens_in_a_new_tab_without_handing_over_the_window(self):
+        # The shape `/queue/`'s own template already uses for «куда».
+        for model, column, locator, _url in ANCHORS:
+            with self.subTest(model=model, column=column):
+                markup = self.markup_of(model, column, locator)
+                self.assertIn('target="_blank"', markup)
+                self.assertIn('rel="noopener"', markup)
+
+    def test_a_missing_url_renders_the_admin_empty_marker(self):
+        for model, column, (by_column, value) in MISSING_URL_ROWS:
+            with self.subTest(model=model, column=column):
+                # Positive control first, and the `Ledger` column is why it is
+                # here: `url_link` REPLACED a plain `url` column, so the row is
+                # exactly as wide as before and the width check cannot notice
+                # that the cell being read is still the old text one — which
+                # renders `-` for a null url too. Against an admin with no link
+                # rendering at all, the marker claim alone passes vacuously;
+                # reading the same column's live link is what gives it teeth.
+                self.assertTrue(
+                    self.hrefs_in(self.markup_of(model, column, ANCHOR_ROW[model, column])),
+                    f'{model}.{column} renders no link at all, so its marker proves nothing',
+                )
+                row = self.text_row(model, by_column, value)
+                self.assertEqual(
+                    self.cell(model, row, column),
+                    '-',
+                    f'nothing stored in {model}.{column} must not look clickable',
+                )
+
+    def test_a_value_that_is_not_an_http_url_stays_text_and_is_no_link(self):
+        # `people.profile` is free text, and a profile stored without a scheme
+        # is ordinary rather than hostile: it reads as itself, not as a link.
+        row = self.text_row('People', 'id', 'li:boris')
+        self.assertEqual(self.cell('People', row, 'profile_link'), NO_SCHEME_PROFILE)
+        self.assertEqual(
+            self.hrefs_in(self.markup_of('People', 'profile_link', ('id', 'li:boris'))),
+            [],
+        )
+
+    def test_a_javascript_value_reaches_no_href_on_the_page(self):
+        row = self.text_row('People', 'id', 'li:script')
+        self.assertEqual(self.cell('People', row, 'profile_link'), SCRIPT_PROFILE)
+        self.assertEqual(
+            self.hrefs_in(self.markup_of('People', 'profile_link', ('id', 'li:script'))),
+            [],
+            'a rejected scheme must not reach its own cell',
+        )
+        self.assertNotIn(
+            'javascript:',
+            ''.join(self.hrefs_in(self.markup_page('People')['html'])),
+            'and no href anywhere on the page may carry it either',
+        )
+
+    def test_an_embedded_quote_cannot_open_a_second_attribute(self):
+        markup = self.markup_of('People', 'profile_link', ('id', 'li:quoted'))
+        hrefs = self.hrefs_in(markup)
+        self.assertEqual(len(hrefs), 1, f'the cell must carry exactly one href: {markup!r}')
+        self.assertIn(
+            '&quot;', hrefs[0], 'the stored quote belongs inside the attribute, escaped'
+        )
+        self.assertNotIn(
+            'onmouseover="',
+            markup,
+            'an embedded quote must not be able to open an event handler',
+        )
+        row = self.text_row('People', 'id', 'li:quoted')
+        self.assertEqual(self.cell('People', row, 'profile_link'), 'профиль')
+
+
 class SortableColumnsTest(ChangelistTestCase):
     """Every new column is a header the operator can click."""
 
@@ -791,10 +1142,10 @@ class SortableColumnsTest(ChangelistTestCase):
 
 
 class NoQueryPerRowTest(ChangelistTestCase):
-    """The resolved name, the count, the headline and every foreign-key column
-    ride the main query."""
+    """The resolved name, the count, the headline, every foreign-key column and
+    every anchor ride the main query."""
 
-    MODELS = ['interactions', 'people', 'leads', 'questions', 'drafts']
+    MODELS = ['interactions', 'people', 'leads', 'questions', 'drafts', 'ledger']
 
     def test_the_changelists_issue_the_same_queries_at_a_full_page_of_rows(self):
         before = self.probe(QUERY_COUNT, PROBE_MODELS=json.dumps(self.MODELS))
@@ -845,6 +1196,14 @@ class NoQueryPerRowTest(ChangelistTestCase):
             0,
             'the volume drafts must be gone again too',
         )
+        self.assertEqual(
+            database.sql(
+                'select count(*) as n from ledger where topic like %s',
+                (f'{BULK_PREFIX}:%',),
+            )[0]['n'],
+            0,
+            'the volume ledger rows must be gone again too',
+        )
 
 
 class DraftsStayViewOnlyTest(ChangelistTestCase):
@@ -878,7 +1237,7 @@ class ScratchSchemaTest(ChangelistTestCase):
             'interactions': len(INTERACTIONS),
             'questions': len(QUESTIONS),
             'leads': len(LEADS),
-            'ledger': 1,
+            'ledger': 2,
             'drafts': 2,
         }
         for table, expected in counts.items():
