@@ -29,7 +29,7 @@ scanning surface, and the full value is one click away on the detail page.
 """
 
 from django.contrib import admin
-from django.db.models import Count, IntegerField, OuterRef, Subquery
+from django.db.models import Count, IntegerField, OuterRef, Subquery, TextField
 from django.db.models.functions import Coalesce
 from django.utils.html import format_html
 
@@ -104,6 +104,97 @@ def _link(url, label):
     return _preview(url) or None
 
 
+class EmptyTextIsNullAdmin(admin.ModelAdmin):
+    """An empty textarea over a nullable `text` column stores NULL, not `''`.
+
+    A change form submits *every* field, so an operator correcting one column
+    also rewrites the row's unset ones — and on origin/main each of those
+    rewrites turned `NULL` into `''`. Measured on this project's own backup
+    rows: submitting a change form exactly as it rendered, with nothing
+    edited, changed two columns on a person (`followers`, `relevance`), one on
+    a question (`yatfa_answer`), two on an interaction (`parent_url`, `note`)
+    and one on a lead (`pain`). The add form did it too — a new person was
+    born with all five optional columns `''`.
+
+    `schema.sql` gives a nullable `text` column exactly one "no value" state,
+    `NULL`, and the rest of the project agrees: `makeFlag` in `lib/cli.mjs`
+    defaults an absent flag to `null`, `bin/import.mjs` binds `?? null` on
+    every optional column, this project's own queue writes
+    `skip_reason=reason or None` (`queue.skip`), and the backup carries zero
+    empty strings. The admin was the only writer producing one.
+
+    Why that is worth a guard, given a changelist cell renders the two
+    identically (`admin.utils.display_for_field` returns `empty_value_display`
+    for anything in `field.empty_values`): the machinery the operator
+    *navigates by* is not identical.
+
+      * `AllValuesFieldListFilter` offers "no value" as `?segment__isnull=
+        True`, and `segment` is in `PeopleAdmin.list_filter`. Of the 24 people
+        in the backup, six have no segment; that filter returned six rows
+        before an unedited save of one of them and five after — the saved
+        person moved behind a second choice, `?segment=`, whose rendered label
+        is the empty string, an invisible link in the «сегмент» sidebar. An
+        operator filtering «сегмент: Пусто» to find the people still needing a
+        segment silently stops seeing the ones they have already opened.
+      * Postgres sorts NULLs last and `''` first, so ascending by «сегмент»
+        the saved row leads the changelist while the untouched ones sit at the
+        bottom.
+
+    The cause is a framework asymmetry rather than anything this project did.
+    In Django 5.2.19 `CharField.formfield` carries
+
+        if self.null and not connection.features.interprets_empty_strings_as_nulls:
+            defaults['empty_value'] = None
+
+    and `TextField.formfield` has no such line: it passes only `max_length`
+    and the `Textarea` widget and spreads `**kwargs`. So a nullable
+    `TextField` builds a `forms.CharField` whose `empty_value` is `''`, an
+    empty textarea cleans to `''`, and the model stores it. `inspectdb` emits
+    `TextField` for every `text` column, which is why this project met the gap
+    on 22 columns at once (People 5, Interactions 6, Questions 6, Ledger 2,
+    Leads 3). This mixin passes for `TextField` exactly what Django already
+    passes for `CharField`.
+
+    Three details of the guard, each load-bearing:
+
+      * `kwargs.setdefault`, not assignment — a per-field override elsewhere
+        in this module must keep winning.
+      * `db_field.null` — a non-null column's only "no value" state *is* `''`,
+        so writing NULL there would be the defect rather than the fix. It is
+        not behaviour-bearing on today's schema (every non-nullable
+        `TextField` here is required, so an empty submission is a form error
+        either way); it stays as a narrowing of intent.
+      * `isinstance(..., TextField)` — the census is deliberately *not*
+        "every field that cleans an empty submission to `''`". Asked that way
+        across every writable admin's change form it answered 25, the three
+        extras being `User.email`, `User.first_name` and `User.last_name`
+        from `django.contrib.auth`: a `CharField` and an `EmailField`, and
+        `null=False`, so `''` is the right stored value there and `UserAdmin`
+        must not inherit this.
+
+    `DraftsAdmin` deliberately does not inherit it either: it is view-only, so
+    it builds no form and its six nullable columns are unreachable from here —
+    the approval queue (`social/queue.py`, `/queue/`) owns every write to
+    `drafts`.
+
+    Nothing rendered changes: this decides only what a form field *cleans* on
+    submit. Clearing a field now means "nothing stored" rather than "stored
+    and empty", which is the answer the CLI already gives; a whitespace-only
+    submission lands there too, because `forms.CharField` strips before
+    testing emptiness — the same answer `links.web_href` gives a
+    whitespace-only URL.
+
+    Inherited explicitly beside `FrozenPrimaryKeyAdmin` at each of the five
+    writable admins rather than folded into it, so the rule is visible where
+    it applies and `drafts` cannot acquire it by accident.
+    """
+
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        if isinstance(db_field, TextField) and db_field.null and db_field.choices is None:
+            kwargs.setdefault('empty_value', None)
+        return super().formfield_for_dbfield(db_field, request, **kwargs)
+
+
 class FrozenPrimaryKeyAdmin(admin.ModelAdmin):
     """Offers an existing row's primary key for reading, never for editing.
 
@@ -175,7 +266,7 @@ class FrozenPrimaryKeyAdmin(admin.ModelAdmin):
 
 
 @admin.register(People)
-class PeopleAdmin(FrozenPrimaryKeyAdmin):
+class PeopleAdmin(EmptyTextIsNullAdmin, FrozenPrimaryKeyAdmin):
     list_display = (
         'id',
         'name',
@@ -277,7 +368,7 @@ class DraftsAdmin(admin.ModelAdmin):
 
 
 @admin.register(Interactions)
-class InteractionsAdmin(FrozenPrimaryKeyAdmin):
+class InteractionsAdmin(EmptyTextIsNullAdmin, FrozenPrimaryKeyAdmin):
     list_display = (
         'id',
         'ts',
@@ -346,7 +437,7 @@ class InteractionsAdmin(FrozenPrimaryKeyAdmin):
 
 
 @admin.register(Questions)
-class QuestionsAdmin(FrozenPrimaryKeyAdmin):
+class QuestionsAdmin(EmptyTextIsNullAdmin, FrozenPrimaryKeyAdmin):
     list_display = (
         'id',
         'date',
@@ -408,7 +499,7 @@ class QuestionsAdmin(FrozenPrimaryKeyAdmin):
 
 
 @admin.register(Ledger)
-class LedgerAdmin(FrozenPrimaryKeyAdmin):
+class LedgerAdmin(EmptyTextIsNullAdmin, FrozenPrimaryKeyAdmin):
     # `url_link` *replaces* the plain `url` column rather than sitting beside
     # it: «Ушло» anchors the topic to `l.url`, and `Ledger.url` is a
     # `TextField`, so the column rendered the address as escaped text. The
@@ -431,7 +522,7 @@ class LedgerAdmin(FrozenPrimaryKeyAdmin):
 
 
 @admin.register(Leads)
-class LeadsAdmin(FrozenPrimaryKeyAdmin):
+class LeadsAdmin(EmptyTextIsNullAdmin, FrozenPrimaryKeyAdmin):
     list_display = (
         'id',
         'person',
