@@ -226,3 +226,14 @@ test('soc export пишет SQL date как день (YYYY-MM-DD), а не ка�
     for (const r of lines(f)) assert.match(String(r[col]), /^\d{4}-\d{2}-\d{2}$/, `${f}.${col} выгружен как ${r[col]}`);
   }
 });
+
+test('soc pace считает только отправленное: время последней отправки и число за 24 часа по сети', { timeout: 60_000 }, async t => {
+  if (!dbUrl) return t.skip(dbNeeded);
+  const before = JSON.parse((await runCli(socPath, ['pace', '--network', 'linkedin'])).output);
+  await publishOne('для pace');
+  const after = JSON.parse((await runCli(socPath, ['pace', '--network', 'linkedin'])).output);
+  assert.equal(after.sent_24h, before.sent_24h + 1);
+  assert.ok(new Date(after.last_sent_at) >= new Date(before.last_sent_at ?? 0));
+  const x = JSON.parse((await runCli(socPath, ['pace', '--network', 'x'])).output);
+  assert.deepEqual(x, { last_sent_at: null, sent_24h: 0 }, 'отправки linkedin не должны попадать в pace по x');
+});

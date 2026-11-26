@@ -41,7 +41,7 @@ npm install
 cp .env.example .env            # set DATABASE_URL
 node bin/soc.mjs migrate        # apply schema.sql (idempotent)
 npm run web                     # http://127.0.0.1:4177
-node bin/soc.mjs help           # CLI reference
+node bin/soc.mjs help           # CLI reference (incl. `pace`: last send and sends in 24h, for add-ons that pace themselves)
 ```
 
 ## Configuration

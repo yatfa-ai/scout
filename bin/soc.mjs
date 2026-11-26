@@ -65,6 +65,13 @@ const commands = {
   },
 
   // soc approved — what may be sent right now (approved rows only, one at a time)
+  // soc pace [--network linkedin] — last send time and sends in the last 24 hours, for pacing add-ons
+  async pace() {
+    const net = flag('network');
+    out(await one(
+      `select max(sent_at) as last_sent_at, count(*) filter (where sent_at > now() - interval '24 hours')::int as sent_24h
+         from drafts where status = 'sent' and ($1::text is null or network = $1)`, [net ?? null]));
+  },
   async approved() {
     out(await q(`select id, network, kind, target_url, body from drafts where status = 'approved' order by approved_at`));
   },
@@ -142,6 +149,7 @@ const commands = {
   add --network --kind --url --note --body-file|--body [--facts --question --person] [--status draft|waiting]
   revise <id> --body-file|--body   (только waiting|approved — sent/skipped/draft править нельзя)
   approved                      что утверждено и ждёт отправки
+  pace [--network <сеть>]       время последней отправки и число отправок за 24 часа
   sent <id> --url <ссылка> [--outcome ...]   только для approved
   inbound --network --text [--person --url --reply-to --kind --ts]
   question --network --question [--asker --role --to-us true --topic --answer --context --source --url]
