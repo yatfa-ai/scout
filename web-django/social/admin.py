@@ -104,8 +104,78 @@ def _link(url, label):
     return _preview(url) or None
 
 
+class FrozenPrimaryKeyAdmin(admin.ModelAdmin):
+    """Offers an existing row's primary key for reading, never for editing.
+
+    `people`, `interactions` and `questions` declare an operator-supplied
+    `text PRIMARY KEY`, so the key is an ordinary editable field — which is
+    right on the *add* form, where the operator must supply it, and destructive
+    on the *change* form, where editing it does not rename the row. Django runs
+    no uniqueness check on a primary key once the instance exists
+    (`Model._perform_unique_checks` skips the pk unless `_state.adding`), and
+    `Model._save_table` then issues `UPDATE … WHERE id = <the submitted
+    value>`: no row matches and the save falls through to an INSERT, copying
+    the row under the new id and leaving every reference pointing at the
+    original; a *different* row matches and that row's columns are overwritten
+    with this form's values. The admin reports success either way, and in the
+    overwrite case the row count does not move, so no count-based surface
+    reveals it. Measured on this project's own data: `q-003` resubmitted as
+    `q-004` — one slipped digit — replaced `q-004`'s recorded market question
+    and left the table seven rows long.
+
+    The id scheme here is what makes that a live hazard rather than a
+    curiosity: `interactions` are hand-minted sequentials
+    (`li-20261023-01`…), `questions` are `q-001`…`q-007`, and the three
+    text-keyed tables hold 42 id pairs exactly one keystroke apart.
+
+    So the key becomes readonly as soon as there is a row to protect. A
+    readonly field is excluded from the generated form, so a submitted value
+    cannot reach the instance at all — the guard is the absence of the field,
+    not a validation that could be bypassed. The key still *renders* on the
+    change page (as `<div class="readonly">li:anna</div>`), because the
+    operator needs to see which row they are editing, and the add form is
+    untouched, including its duplicate-key error.
+
+    ⚠️ The discriminator is `pk.formfield() is None`, not `pk.editable`. Every
+    one of this project's six models reports `editable = True` on its primary
+    key, `BigAutoField` included — `AutoFieldMixin.formfield` returns None
+    instead, which is how a generated id stays out of forms. Freezing on
+    `editable` would therefore add a readonly `id` row to the `drafts`,
+    `leads` and `ledger` detail pages, which never showed one; `formfield()
+    is None` splits the six cleanly 3/3. Both halves are pinned by
+    `tests/test_admin_primary_key_frozen.py`.
+
+    Renaming a row on purpose is not provided here, and this is not a
+    substitute for one: it would have to re-point every referencing column
+    (`interactions.person`, `questions.asker`, `leads.person`, …), several of
+    which carry no foreign key in `schema.sql` at all. The honest answer today
+    is a surface that refuses rather than one that silently corrupts.
+
+    One rendering consequence, accepted rather than worked around: the key's
+    row moves to the *bottom* of the change page's fieldset, because
+    `ModelAdmin.get_fields` lays out the form's fields and then the readonly
+    ones. Pinning its old position would mean declaring explicit
+    `fields`/`fieldsets` on five admins, which trades one line of layout for
+    five hand-maintained column lists that a new column would silently miss.
+    """
+
+    def get_readonly_fields(self, request, obj=None):
+        readonly = tuple(super().get_readonly_fields(request, obj))
+        if obj is None:
+            # The add form: the operator supplies the key, so it must stay
+            # editable and required there.
+            return readonly
+        pk = self.model._meta.pk
+        if pk.formfield() is None or pk.name in readonly:
+            # A database-generated key reaches no form in the first place, so
+            # naming it here would only add a row to a detail page that never
+            # had one.
+            return readonly
+        return readonly + (pk.name,)
+
+
 @admin.register(People)
-class PeopleAdmin(admin.ModelAdmin):
+class PeopleAdmin(FrozenPrimaryKeyAdmin):
     list_display = (
         'id',
         'name',
@@ -207,7 +277,7 @@ class DraftsAdmin(admin.ModelAdmin):
 
 
 @admin.register(Interactions)
-class InteractionsAdmin(admin.ModelAdmin):
+class InteractionsAdmin(FrozenPrimaryKeyAdmin):
     list_display = (
         'id',
         'ts',
@@ -276,7 +346,7 @@ class InteractionsAdmin(admin.ModelAdmin):
 
 
 @admin.register(Questions)
-class QuestionsAdmin(admin.ModelAdmin):
+class QuestionsAdmin(FrozenPrimaryKeyAdmin):
     list_display = (
         'id',
         'date',
@@ -338,7 +408,7 @@ class QuestionsAdmin(admin.ModelAdmin):
 
 
 @admin.register(Ledger)
-class LedgerAdmin(admin.ModelAdmin):
+class LedgerAdmin(FrozenPrimaryKeyAdmin):
     # `url_link` *replaces* the plain `url` column rather than sitting beside
     # it: «Ушло» anchors the topic to `l.url`, and `Ledger.url` is a
     # `TextField`, so the column rendered the address as escaped text. The
@@ -361,7 +431,7 @@ class LedgerAdmin(admin.ModelAdmin):
 
 
 @admin.register(Leads)
-class LeadsAdmin(admin.ModelAdmin):
+class LeadsAdmin(FrozenPrimaryKeyAdmin):
     list_display = (
         'id',
         'person',
