@@ -130,6 +130,10 @@ class DraftsAdmin(admin.ModelAdmin):
     list_display = ('id', 'network', 'kind', 'status', 'target_person', 'created_at', 'sent_at')
     list_filter = ('status', 'network', 'kind')
     search_fields = ('body', 'target_note', 'target_url')
+    # `target_person` renders the related person's own label, so load it with
+    # the draft: without this the column costs one query per row that names
+    # someone, and the cost grows with the page (100 rows by default).
+    list_select_related = ('target_person',)
     ordering = ('-created_at',)
 
     def has_add_permission(self, request):
@@ -215,6 +219,10 @@ class QuestionsAdmin(admin.ModelAdmin):
     )
     list_filter = ('to_us', 'network', 'status')
     search_fields = ('id', 'question', 'context', 'yatfa_answer')
+    # `asker` renders the related person's own label, so load it with the
+    # question: without this the column costs one query per row that names
+    # someone, and the cost grows with the page (100 rows by default).
+    list_select_related = ('asker',)
     ordering = ('-date',)
 
     @admin.display(description='вопрос', ordering='question')

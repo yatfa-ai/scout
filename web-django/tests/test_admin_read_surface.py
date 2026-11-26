@@ -27,6 +27,15 @@ text. A changelist page contains a row's `__str__` in the checkbox's
 text sits in no visible column — the exact false pass this module exists to
 rule out. Those examples therefore go through `rows_of()`, and the row width is
 checked against `list_display` so a broken extractor cannot pass either.
+
+`NoQueryPerRowTest` sits in that second half, but its claim is about COST
+rather than content: a changelist must not grow a query with its page. It
+covers all five changelists that resolve something per row — the two annotated
+values (the interaction's resolved person name, the person's message count)
+and the four `list_select_related` foreign-key columns (`interactions.draft`,
+`leads.person`, `questions.asker`, `drafts.target_person`) — and
+`_add_bulk_rows` populates each of those foreign keys, because a page of rows
+with a null one measures nothing (see the warning on that helper).
 """
 
 import json
@@ -85,6 +94,13 @@ MODEL_URLS = {
     'Drafts': 'drafts',
 }
 
+# Django renders the action checkbox as a row's first cell only on a changelist
+# that offers an action, and `DraftsAdmin` offers none: dropping its delete
+# permission empties `get_actions`. So a drafts row is one cell narrower than
+# every other model's, and the width control and the cell offsets below read
+# that difference from here rather than assuming a checkbox everywhere.
+ACTION_CHECKBOX = {model: 0 if model == 'Drafts' else 1 for model in LIST_DISPLAY}
+
 CYRILLIC = set('абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ')
 
 # --- fixture ---------------------------------------------------------------
@@ -125,10 +141,16 @@ QUESTION_TEXT = 'Как считать окупаемость агентов, е
 ANSWER_TEXT = 'Есть ledger и очередь утверждений — считаем по отправленному.'
 UNANSWERED_QUESTION = 'Кто отвечает, когда агент ошибается?'
 
+ANONYMOUS_QUESTION = 'А кто это вообще спросил — мы не записали.'
+
 QUESTIONS = [
     # id, asker, to_us, question, answer, topic
     ('q-roi', 'li:anna', True, QUESTION_TEXT, ANSWER_TEXT, 'ROI'),
     ('q-blame', 'li:boris', False, UNANSWERED_QUESTION, None, 'ответственность'),
+    # No asker: `questions.asker` is nullable, so loading the person with the
+    # question must keep the join a LEFT OUTER one and this row must still be
+    # on the page, with the admin's own empty marker in the column.
+    ('q-anon', None, False, ANONYMOUS_QUESTION, None, 'без автора'),
 ]
 
 PAIN_TEXT = 'каждое согласование — это переписка на три дня'
@@ -140,6 +162,12 @@ LEADS = [
 ]
 
 DRAFT_BODY = 'черновик для проверки, что drafts остались только для чтения'
+# A second draft, addressed to someone: `drafts.target_person` is nullable, so
+# the fixture draft above shows the empty marker and this one shows the
+# person's own label — loading the person with the draft must leave both cells
+# exactly as they were.
+TARGETED_DRAFT_BODY = 'черновик с адресатом: ячейка показывает человека, а не его id'
+TARGETED_DRAFT_PERSON = 'li:anna'
 
 # «Ушло» renders ledger rows, and `LedgerAdmin` already matched that pane
 # column for column before this slice: one row, so the listing has something
@@ -316,6 +344,7 @@ print(json.dumps({
 
 database = None
 draft_id = None
+targeted_draft_id = None
 
 
 def setUpModule():
@@ -344,7 +373,7 @@ def tearDownModule():
 
 
 def _seed():
-    global draft_id
+    global draft_id, targeted_draft_id
     for person_id, name, network, headline in PEOPLE:
         database.sql(
             """insert into people (id, name, network, profile, headline, segment, first_seen)
@@ -355,6 +384,11 @@ def _seed():
         """insert into drafts (network, kind, status, body) values
            ('linkedin', 'comment', 'waiting', %s) returning id""",
         (DRAFT_BODY,),
+    )[0]['id']
+    targeted_draft_id = database.sql(
+        """insert into drafts (network, kind, status, target_person, body) values
+           ('linkedin', 'comment', 'waiting', %s, %s) returning id""",
+        (TARGETED_DRAFT_PERSON, TARGETED_DRAFT_BODY),
     )[0]['id']
     for interaction_id, direction, kind, person, text in INTERACTIONS:
         database.sql(
@@ -384,7 +418,15 @@ def _seed():
 
 
 def _add_bulk_rows(volume):
-    """`volume` more people, each with one interaction and one lead."""
+    """`volume` more people, each with one interaction, lead, question and draft.
+
+    ⚠️ Every bulk row POPULATES the foreign key its changelist displays — each
+    question's `asker` and each draft's `target_person` name that row's own
+    bulk person. A bulk row with a null foreign key costs no per-row query, so
+    seeding them empty would fill the measured page with cheap rows and the
+    example would pass over a live N+1 — and worse, the cheap rows displace the
+    fixture off page 1, which can make the count *fall*.
+    """
     database.sql(
         """insert into people (id, name, network, headline, first_seen)
            select %s || ':' || g, 'Массовый ' || g, 'linkedin', 'заголовок ' || g, '2026-11-01'
@@ -404,9 +446,35 @@ def _add_bulk_rows(volume):
            from generate_series(1, %s) g""",
         (BULK_PREFIX, volume),
     )
+    # Dated a day after the fixture questions, so `-date` puts the rows that
+    # name an asker on the measured page rather than behind it.
+    database.sql(
+        """insert into questions (id, date, network, asker, to_us, question, topic, status)
+           select %s || '-q:' || g, '2026-11-21', 'linkedin', %s || ':' || g, false,
+                  'массовый вопрос ' || g, 'массовая тема', 'открыт'
+           from generate_series(1, %s) g""",
+        (BULK_PREFIX, BULK_PREFIX, volume),
+    )
+    # `drafts.id` is a `bigserial`, so these rows cannot carry the `bulk:`
+    # prefix the others key on — `_remove_bulk_rows` finds them by their
+    # `target_person` instead. `kind` and `status` are the fixture draft's own
+    # values, which the table's CHECK constraints accept.
+    database.sql(
+        """insert into drafts (network, kind, status, target_person, body)
+           select 'linkedin', 'comment', 'waiting', %s || ':' || g, 'массовый черновик ' || g
+           from generate_series(1, %s) g""",
+        (BULK_PREFIX, volume),
+    )
 
 
 def _remove_bulk_rows():
+    # The rows that NAME a bulk person go first: `schema.sql` declares
+    # `questions.asker`, `drafts.target_person` and `leads.person` with a bare
+    # `REFERENCES people(id)`, so the database refuses to delete a person any
+    # of them still points at. (`interactions.person` is free-form text with no
+    # foreign key at all, so its own delete is ordered here only for company.)
+    database.sql('delete from questions where asker like %s', (f'{BULK_PREFIX}:%',))
+    database.sql('delete from drafts where target_person like %s', (f'{BULK_PREFIX}:%',))
     database.sql('delete from leads where person like %s', (f'{BULK_PREFIX}:%',))
     database.sql('delete from interactions where person like %s', (f'{BULK_PREFIX}:%',))
     database.sql('delete from people where id like %s', (f'{BULK_PREFIX}:%',))
@@ -471,6 +539,16 @@ class AdminListingTest(unittest.TestCase):
         # query per row that has one.
         self.assertEqual(self.admins['Interactions']['list_select_related'], ['draft'])
 
+    def test_questions_load_the_asker_with_the_question(self):
+        # The `asker` column renders the related person: without this a full
+        # 100-row page costs ~100 queries instead of one join.
+        self.assertEqual(self.admins['Questions']['list_select_related'], ['asker'])
+
+    def test_drafts_load_the_target_person_with_the_draft(self):
+        # The `target_person` column renders the related person. Reads only:
+        # `DraftsAdmin` stays view-only, and `DraftsStayViewOnlyTest` pins it.
+        self.assertEqual(self.admins['Drafts']['list_select_related'], ['target_person'])
+
     def test_leads_keep_their_own_ordering(self):
         # Replicating the Node stage-priority CASE would override the
         # operator's column clicks; that decision is not ours to make.
@@ -500,8 +578,9 @@ class ChangelistTestCase(unittest.TestCase):
         page = self.probe(RENDER_CHANGELIST, PROBE_MODEL=MODEL_URLS[model], PROBE_QUERY=query)
         self.assertEqual(page['status'], 200)
         self.assertTrue(page['rows'], f'the {model} changelist rendered no row')
-        # The extractor control: one cell per column, plus the action checkbox.
-        expected = len(LIST_DISPLAY[model]) + 1
+        # The extractor control: one cell per column, plus the action checkbox
+        # where the changelist offers an action (see ACTION_CHECKBOX).
+        expected = len(LIST_DISPLAY[model]) + ACTION_CHECKBOX[model]
         for row in page['rows']:
             self.assertEqual(
                 len(row), expected, f'{model} row has {len(row)} cells, expected {expected}'
@@ -510,7 +589,7 @@ class ChangelistTestCase(unittest.TestCase):
 
     def cell(self, model, row, column):
         """One row's value for a `list_display` column."""
-        return row[LIST_DISPLAY[model].index(column) + 1]
+        return row[LIST_DISPLAY[model].index(column) + ACTION_CHECKBOX[model]]
 
     def row_with(self, page, model, column, value):
         matches = [r for r in page['rows'] if self.cell(model, r, column) == value]
@@ -592,6 +671,18 @@ class QuestionsPaneTest(ChangelistTestCase):
             'nothing stored must not look like a stored empty answer',
         )
 
+    def test_the_asker_is_the_person_and_a_question_with_no_asker_shows_the_marker(self):
+        # Loading the person with the question moves no content: the column
+        # still renders the person's own label, and a null `asker` still puts
+        # its row on the page (a LEFT OUTER join, not an INNER one).
+        asked = self.row_with(self.page, 'Questions', 'id', 'q-roi')
+        self.assertEqual(self.cell('Questions', asked, 'asker'), 'Анна Петрова (linkedin)')
+        anonymous = self.row_with(self.page, 'Questions', 'id', 'q-anon')
+        self.assertEqual(
+            self.cell('Questions', anonymous, 'question_preview'), ANONYMOUS_QUESTION
+        )
+        self.assertEqual(self.cell('Questions', anonymous, 'asker'), '-')
+
 
 class PeoplePaneTest(ChangelistTestCase):
     """«Люди»: the headline and the message count the Node pane calls `n`."""
@@ -661,6 +752,22 @@ class LedgerPaneTest(ChangelistTestCase):
         self.assertEqual(self.cell('Ledger', row, 'outcome'), LEDGER[3])
 
 
+class DraftsPaneTest(ChangelistTestCase):
+    """«Ждёт тебя» lives at `/queue/`: this listing is for inspection only."""
+
+    def test_the_target_person_is_the_person_or_the_empty_marker(self):
+        # Loading the person with the draft moves no content: the column still
+        # renders the person's own label, and the draft addressed to nobody
+        # still shows up with the admin's marker rather than dropping out.
+        page = self.changelist('Drafts')
+        addressed = self.row_with(page, 'Drafts', 'id', str(targeted_draft_id))
+        self.assertEqual(
+            self.cell('Drafts', addressed, 'target_person'), 'Анна Петрова (linkedin)'
+        )
+        unaddressed = self.row_with(page, 'Drafts', 'id', str(draft_id))
+        self.assertEqual(self.cell('Drafts', unaddressed, 'target_person'), '-')
+
+
 class SortableColumnsTest(ChangelistTestCase):
     """Every new column is a header the operator can click."""
 
@@ -684,9 +791,10 @@ class SortableColumnsTest(ChangelistTestCase):
 
 
 class NoQueryPerRowTest(ChangelistTestCase):
-    """The resolved name, the count and the headline ride the main query."""
+    """The resolved name, the count, the headline and every foreign-key column
+    ride the main query."""
 
-    MODELS = ['interactions', 'people', 'leads']
+    MODELS = ['interactions', 'people', 'leads', 'questions', 'drafts']
 
     def test_the_changelists_issue_the_same_queries_at_a_full_page_of_rows(self):
         before = self.probe(QUERY_COUNT, PROBE_MODELS=json.dumps(self.MODELS))
@@ -720,6 +828,22 @@ class NoQueryPerRowTest(ChangelistTestCase):
             )[0]['n'],
             0,
             'the volume rows must be gone again, so the fixture is what the other examples read',
+        )
+        self.assertEqual(
+            database.sql(
+                'select count(*) as n from questions where asker like %s',
+                (f'{BULK_PREFIX}:%',),
+            )[0]['n'],
+            0,
+            'the volume questions must be gone again too',
+        )
+        self.assertEqual(
+            database.sql(
+                'select count(*) as n from drafts where target_person like %s',
+                (f'{BULK_PREFIX}:%',),
+            )[0]['n'],
+            0,
+            'the volume drafts must be gone again too',
         )
 
 
@@ -755,7 +879,7 @@ class ScratchSchemaTest(ChangelistTestCase):
             'questions': len(QUESTIONS),
             'leads': len(LEADS),
             'ledger': 1,
-            'drafts': 1,
+            'drafts': 2,
         }
         for table, expected in counts.items():
             with self.subTest(table=table):
