@@ -105,7 +105,10 @@ unless set, and the run above is the whole command: the project serves the admin
 JS itself, from `socweb/urls.py`, so the ops surface comes up styled and with its JavaScript
 alive without `DEBUG` and without any `runserver` flag. What that route exposes is Django's
 admin asset directory and nothing else — no project `static/` directory, no `STATIC_ROOT` and no
-`collectstatic` step — on the loopback interface the settings already pin.
+`collectstatic` step — on the loopback interface the settings already pin. A request that fails
+prints its traceback — the exception, its message and the path — to that same console, so
+`DEBUG=1` is not needed to find out why a page answered «Server Error (500)»; the response itself
+stays Django's bare error page.
 
 The admin needs a Django user, and the queue is staff-only too, so the same login gates both.
 Django keeps its users, sessions and admin log in its own tables, which the `social` database
