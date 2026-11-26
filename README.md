@@ -94,15 +94,18 @@ slice of the rebuild is done.
 ```sh
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r web-django/requirements.txt
-cp .env.example .env                 # set DATABASE_URL and SECRET_KEY, and DEBUG=1 for local work
+cp .env.example .env                 # set DATABASE_URL and SECRET_KEY
 cd web-django && python manage.py runserver 127.0.0.1:8000   # http://127.0.0.1:8000/
 ```
 
 Settings read `DATABASE_URL`, `SECRET_KEY` and `DEBUG` from the environment, or from the
 repo-root `.env` that `lib/db.mjs` already reads. `DATABASE_URL` and `SECRET_KEY` have no
 fallbacks: a missing value is a boot failure, the same way `loadEnv()` throws. `DEBUG` is off
-unless set — turn it on locally, because `runserver` serves the admin's CSS and JS only with
-`DEBUG` on.
+unless set, and the run above is the whole command: the project serves the admin's own CSS and
+JS itself, from `socweb/urls.py`, so the ops surface comes up styled and with its JavaScript
+alive without `DEBUG` and without any `runserver` flag. What that route exposes is Django's
+admin asset directory and nothing else — no project `static/` directory, no `STATIC_ROOT` and no
+`collectstatic` step — on the loopback interface the settings already pin.
 
 The admin needs a Django user, and the queue is staff-only too, so the same login gates both.
 Django keeps its users, sessions and admin log in its own tables, which the `social` database
@@ -128,8 +131,10 @@ They pin the environment contract and the fail-fast, the loopback-only `ALLOWED_
 every model stays unmanaged, that no HTTP client is imported anywhere under `web-django/`, that
 `.env` stays git-ignored with no secrets in tracked files, that `drafts` stays view-only in the
 admin, that the admin's add forms ask for no machine timestamp while the three operator-supplied
-ones stay required, and the front door: `/` goes to the queue, «Открыть сайт» in the admin goes
-there too, and the queue's tab row goes to the right admin pane. The configuration half of all
+ones stay required, that the admin's own CSS and JS answer 200 with `DEBUG` off while nothing
+outside Django's admin asset directory is reachable through that route, and the front door: `/`
+goes to the queue, «Открыть сайт» in the admin goes there too, and the queue's tab row goes to
+the right admin pane. The configuration half of all
 that needs neither a database nor a configured variable. The half that renders pages — the
 queue's transitions, the changelist columns, what an admin add or edit does to the timestamps and
 to the leads ordering, where a URL actually lands — needs a real Postgres: those
