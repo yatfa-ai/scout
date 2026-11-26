@@ -53,15 +53,20 @@ first as its own positive control.
 
 `NoQueryPerRowTest` sits in that second half, but its claim is about COST
 rather than content: a changelist must not grow a query with its page. It
-covers all five changelists that resolve something per row — the two annotated
-values (the interaction's resolved person name, the person's message count)
-and the four `list_select_related` foreign-key columns (`interactions.draft`,
-`leads.person`, `questions.asker`, `drafts.target_person`) — and
-`_add_bulk_rows` populates each of those foreign keys, because a page of rows
-with a null one measures nothing (see the warning on that helper). The link
-columns ride it too: four of the five read their own row's column and the
-fifth reads the `people` row `list_select_related` already loads, so no
-anchor may add a fetch.
+covers all six changelists this admin owns — the five that resolve something
+per row, through the two annotated values (the interaction's resolved person
+name, the person's message count) and the four `list_select_related`
+foreign-key columns (`interactions.draft`, `leads.person`, `questions.asker`,
+`drafts.target_person`), plus `ledger`, whose only changed column is the
+replacement anchor — and `_add_bulk_rows` populates each of those foreign keys,
+because a page of rows with a null one measures nothing (see the warning on
+that helper). All five link columns are measured: four read their own row's
+column and the fifth (`leads.person_profile_link`) reads the `people` row
+`list_select_related` already loads, so no anchor may add a fetch. The ledger
+is in `MODELS` for that reason and its bulk rows each store a `url`, so
+`url_link` is measured at volume on a page of rendered anchors — the one
+changelist whose column set changed by replacement rather than addition is not
+the one left unguarded.
 """
 
 import json
@@ -389,7 +394,7 @@ print(json.dumps(changelist(os.environ['PROBE_MODEL'], os.environ.get('PROBE_QUE
 # A click-through claim is a claim about an `href`, and `rows_of()` strips
 # exactly that attribute away, so this returns each row's cells as MARKUP.
 # The stripped cells ride along so a row can still be found by its id, and
-# the width control in `ClickThroughTest.markup_rows` reads both.
+# the width control in `ClickThroughTest.markup_page` reads both.
 RENDER_CELL_MARKUP = HTTP_PRELUDE + """
 client = operator_client()
 response = client.get(changelist_url(os.environ['PROBE_MODEL']))
@@ -548,7 +553,8 @@ def _seed():
 
 
 def _add_bulk_rows(volume):
-    """`volume` more people, each with one interaction, lead, question and draft.
+    """`volume` more people, each with one interaction, lead, question and
+    draft, plus `volume` ledger rows (which hang off no person).
 
     ⚠️ Every bulk row POPULATES the foreign key its changelist displays — each
     question's `asker` and each draft's `target_person` name that row's own
@@ -595,6 +601,18 @@ def _add_bulk_rows(volume):
            from generate_series(1, %s) g""",
         (BULK_PREFIX, volume),
     )
+    # `ledger.id` is a `bigserial` too and the table carries no foreign key at
+    # all, so these rows are keyed by a `topic` prefix. Every one of them
+    # stores a `url`, so the page `LedgerAdmin.url_link` is measured on is a
+    # page of rendered anchors rather than of empty markers; and they are dated
+    # after the fixture rows so `-at` puts them on the measured page.
+    database.sql(
+        """insert into ledger (at, network, topic, url, outcome)
+           select '2026-11-21 10:00', 'linkedin', %s || ': массовая тема ' || g,
+                  'https://example.test/post/' || g, 'отклик'
+           from generate_series(1, %s) g""",
+        (BULK_PREFIX, volume),
+    )
 
 
 def _remove_bulk_rows():
@@ -608,6 +626,10 @@ def _remove_bulk_rows():
     database.sql('delete from leads where person like %s', (f'{BULK_PREFIX}:%',))
     database.sql('delete from interactions where person like %s', (f'{BULK_PREFIX}:%',))
     database.sql('delete from people where id like %s', (f'{BULK_PREFIX}:%',))
+    # The ledger rows name no person, so this one is unordered with respect to
+    # the rest — it has to happen all the same, because 120 rows dated after
+    # the fixture would otherwise displace «Ушло»'s own rows off page 1.
+    database.sql('delete from ledger where topic like %s', (f'{BULK_PREFIX}:%',))
 
 
 # --- the metadata half -----------------------------------------------------
@@ -1120,10 +1142,10 @@ class SortableColumnsTest(ChangelistTestCase):
 
 
 class NoQueryPerRowTest(ChangelistTestCase):
-    """The resolved name, the count, the headline and every foreign-key column
-    ride the main query."""
+    """The resolved name, the count, the headline, every foreign-key column and
+    every anchor ride the main query."""
 
-    MODELS = ['interactions', 'people', 'leads', 'questions', 'drafts']
+    MODELS = ['interactions', 'people', 'leads', 'questions', 'drafts', 'ledger']
 
     def test_the_changelists_issue_the_same_queries_at_a_full_page_of_rows(self):
         before = self.probe(QUERY_COUNT, PROBE_MODELS=json.dumps(self.MODELS))
@@ -1173,6 +1195,14 @@ class NoQueryPerRowTest(ChangelistTestCase):
             )[0]['n'],
             0,
             'the volume drafts must be gone again too',
+        )
+        self.assertEqual(
+            database.sql(
+                'select count(*) as n from ledger where topic like %s',
+                (f'{BULK_PREFIX}:%',),
+            )[0]['n'],
+            0,
+            'the volume ledger rows must be gone again too',
         )
 
 
