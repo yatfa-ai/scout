@@ -3,8 +3,9 @@
 Generated with `python manage.py inspectdb` against a database built from
 `schema.sql` (the schema source of truth) and then hand-cleaned: explicit
 `db_column` on the foreign keys, choices and defaults mirroring the CHECK
-constraints and DEFAULTs in `schema.sql`, Russian verbose names for the admin,
-and `__str__` for readable rows.
+constraints and DEFAULTs in `schema.sql`, `on_delete` mirroring the foreign
+keys' delete behaviour there, Russian verbose names for the admin, and
+`__str__` for readable rows.
 
 Every model is `managed = False`. Django owns no DDL here: `schema.sql` plus
 `soc migrate` remain the only way the schema changes, so `manage.py migrate`
@@ -113,9 +114,23 @@ class Drafts(models.Model):
     status = models.TextField(
         choices=DRAFT_STATUS_CHOICES, default='waiting', verbose_name='статус'
     )
+    # `models.PROTECT` on this and the five foreign keys below is the mirror of
+    # what `schema.sql` does: none of its six `REFERENCES` clauses carries an
+    # `ON DELETE`, so every one of them is `NO ACTION` — the database's answer
+    # to deleting a referenced row is, and stays, *refuse*. `inspectdb` emits
+    # `DO_NOTHING`, which means "issue no related query and raise nothing", so
+    # the admin saw no obstacle, rendered the confirm button and sent the
+    # `DELETE` straight into an `IntegrityError` — an HTTP 500 on the ops
+    # surface. `PROTECT` is that same refusal expressed where Django can act on
+    # it: `admin.utils.NestedObjects.collect` catches `ProtectedError` into its
+    # `protected` list and the delete views (`options.ModelAdmin.delete_view`,
+    # `actions.delete_selected`) then refuse without touching the database and
+    # name the rows standing in the way. `on_delete` is consulted only on
+    # delete, so nothing else about these fields changes, and `managed = False`
+    # keeps Django out of DDL either way.
     target_person = models.ForeignKey(
         People,
-        models.DO_NOTHING,
+        models.PROTECT,
         db_column='target_person',
         blank=True,
         null=True,
@@ -157,7 +172,7 @@ class Interactions(models.Model):
     parent_url = models.TextField(blank=True, null=True, verbose_name='родительская ссылка')
     in_reply_to = models.ForeignKey(
         'self',
-        models.DO_NOTHING,
+        models.PROTECT,
         db_column='in_reply_to',
         blank=True,
         null=True,
@@ -166,7 +181,7 @@ class Interactions(models.Model):
     text = models.TextField(blank=True, null=True, verbose_name='текст')
     draft = models.ForeignKey(
         Drafts,
-        models.DO_NOTHING,
+        models.PROTECT,
         db_column='draft_id',
         blank=True,
         null=True,
@@ -194,7 +209,7 @@ class Questions(models.Model):
     network = models.TextField(verbose_name='сеть')
     asker = models.ForeignKey(
         People,
-        models.DO_NOTHING,
+        models.PROTECT,
         db_column='asker',
         blank=True,
         null=True,
@@ -206,7 +221,7 @@ class Questions(models.Model):
     context = models.TextField(blank=True, null=True, verbose_name='контекст')
     source = models.ForeignKey(
         Interactions,
-        models.DO_NOTHING,
+        models.PROTECT,
         db_column='source',
         blank=True,
         null=True,
@@ -252,7 +267,7 @@ class Leads(models.Model):
     # OneToOne, not ForeignKey: schema.sql carries a unique index
     # (leads_person_uniq) over leads(person), so one person has one lead row.
     person = models.OneToOneField(
-        People, models.DO_NOTHING, db_column='person', verbose_name='человек'
+        People, models.PROTECT, db_column='person', verbose_name='человек'
     )
     stage = models.TextField(
         choices=LEAD_STAGE_CHOICES, default='candidate', verbose_name='этап'
