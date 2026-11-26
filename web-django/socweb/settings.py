@@ -95,6 +95,52 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+# A failed request must name its cause on the console the operator already
+# watches. Django's own `DEFAULT_LOGGING` cannot: its `console` handler carries
+# the `require_debug_true` filter, so with `DEBUG` off the traceback is
+# discarded, and its only other route out of `django.request` is `mail_admins`,
+# whose `AdminEmailHandler.emit` returns immediately when no `ADMINS` are set —
+# which this project never sets, because an SMTP send is an outbound network
+# call (knowledge scout-3, decision 5: no outbound network calls in v1). So
+# with `DEBUG` off the console kept printing the `django.server` status line of
+# a 500 and nothing named the exception. Failing loudly on the console is the
+# project's convention anyway: `web/server.mjs` answers
+# `json(res, 500, { error: e.message })` and `bin/soc.mjs` ends with
+# `console.error('ошибка:', e.message)`.
+#
+# Four choices here are load-bearing:
+#
+#   1. `django.request`, not `django`. `django.utils.log.log_response` — the
+#      function that logs a 500 with its traceback — writes to
+#      `logging.getLogger('django.request')`. Configuring `django` instead
+#      would also work for the traceback but would damage the request lines:
+#      `logging.config._handle_existing_loggers` resets every existing child of
+#      a newly configured logger (`setLevel(NOTSET)`, `handlers = []`,
+#      `propagate = True`), so `django.server` would lose `DEFAULT_LOGGING`'s
+#      own `ServerFormatter` and its lines would come back reformatted.
+#   2. `ERROR`. `log_response` logs a 5xx at error and a 4xx at warning, so a
+#      lower level would print a line per 404.
+#   3. `propagate: False`. Without it a 500 is logged twice when `DEBUG` is on
+#      (this handler plus `django`'s own console handler).
+#   4. No handler on the response: the traceback goes to the console only. The
+#      500 page stays Django's bare one, so nothing internal reaches a browser.
+#
+# What reaches the console is the exception, its message and the request path —
+# not the local variables, settings or SQL that the `DEBUG=1` page dumps.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'plain': {'format': '[{asctime}] {levelname} {name}: {message}', 'style': '{'},
+    },
+    'handlers': {
+        'console': {'class': 'logging.StreamHandler', 'formatter': 'plain'},
+    },
+    'loggers': {
+        'django.request': {'handlers': ['console'], 'level': 'ERROR', 'propagate': False},
+    },
+}
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # The invariant tests of this slice touch no database, and the models are
